@@ -11,9 +11,6 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
-	"github.com/sirupsen/logrus"
-
-	"github.com/bwmarrin/discordgo"
 	"github.com/servusdei2018/shards/v2"
 )
 
@@ -33,19 +30,25 @@ func init() {
 		fmt.Printf("Error loading .env file: %v\n", err)
 	}
 
+	// Initialize the logger first
+	initLogger()
+
 	// Get the BOT_TOKEN from the environment
 	cfg = config{
 		Token: os.Getenv("DISCORD_TOKEN"),
 	}
 
 	if cfg.Token == "" {
-		fmt.Println("DISCORD_TOKEN is required but not set in the environment")
+		appLogger.Error("DISCORD_TOKEN is required but not set in the environment")
+		os.Exit(1)
 	}
+
+	appLogger.Info("Configuration loaded successfully")
 }
 
-
-
 func main() {
+	appLogger.Info("Starting Blazium Bot...")
+
 	// Create a new router using Gorilla Mux
 	r := mux.NewRouter()
 
@@ -68,49 +71,70 @@ func main() {
 	embedHandler := embedMiddleware(r)
 	corsHandler := enableCORS(embedHandler)
 
-	runBotRoutine()
+	// Start the Discord bot system
+	runDiscordBot()
 
-	// Start the server
-	fmt.Println("Starting server on :8080")
-	err := http.ListenAndServe(":8080", corsHandler)
-	if err != nil {
-		logrus.Error("Error starting server:", err)
+	// Set up signal handling for graceful shutdown
+	sc := make(chan os.Signal, 1)
+	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+
+	// Start HTTP server in a goroutine
+	go func() {
+		appLogger.Info("Starting HTTP server on :8080")
+		err := http.ListenAndServe(":8080", corsHandler)
+		if err != nil {
+			appLogger.Errorf("Error starting HTTP server: %v", err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	appLogger.Info("Bot is now running. Press CTRL-C to exit.")
+	<-sc
+
+	// Gracefully shutdown
+	appLogger.Info("Shutdown signal received. Stopping bot...")
+	if CommandManager != nil {
+		appLogger.Info("Cleaning up commands and shutting down...")
+		if err := CommandManager.StopShards(); err != nil {
+			appLogger.Errorf("Error stopping shard manager: %v", err)
+		} else {
+			appLogger.Info("Bot shutdown completed successfully")
+		}
 	}
+	appLogger.Info("Bot shutdown complete.")
 }
 
-
-
 func enableCORS(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Set CORS headers
-        w.Header().Set("Access-Control-Allow-Origin", "*") // Allow all origins, you can restrict this to a specific domain
-        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-        w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*") // Allow all origins, you can restrict this to a specific domain
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-        // Handle preflight OPTIONS requests
-        if r.Method == "OPTIONS" {
-            w.WriteHeader(http.StatusOK)
-            return
-        }
+		// Handle preflight OPTIONS requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 
-        // Call the next handler
-        next.ServeHTTP(w, r)
-    })
+		// Call the next handler
+		next.ServeHTTP(w, r)
+	})
 }
 
 func embedMiddleware(next http.Handler) http.Handler {
-    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Get the User-Agent header and convert it to lowercase for case-insensitive comparison
-        userAgent := strings.ToLower(r.Header.Get("User-Agent"))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Get the User-Agent header and convert it to lowercase for case-insensitive comparison
+		userAgent := strings.ToLower(r.Header.Get("User-Agent"))
 
-        // Check if the User-Agent contains "discordbot" (case-insensitive)
-        if strings.Contains(userAgent, "discordbot") {
-            // Set appropriate headers for HTML content and caching
-            w.Header().Set("Content-Type", "text/html; charset=utf-8")
-            w.Header().Set("Cache-Control", "max-age=3600") // Cache the response for 1 hour
+		// Check if the User-Agent contains "discordbot" (case-insensitive)
+		if strings.Contains(userAgent, "discordbot") {
+			// Set appropriate headers for HTML content and caching
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "max-age=3600") // Cache the response for 1 hour
 
-            // Write the Open Graph meta tags for Discord embeds
-            w.Write([]byte(`
+			// Write the Open Graph meta tags for Discord embeds
+			w.Write([]byte(`
                 <!DOCTYPE html>
                 <html lang="en">
                 <head>
@@ -130,91 +154,18 @@ func embedMiddleware(next http.Handler) http.Handler {
                 </body>
                 </html>
             `))
-            return
-        }
-
-        // If the User-Agent is not from Discord, pass the request to the next handler
-        next.ServeHTTP(w, r)
-    })
-}
-
-func onConnect(s *discordgo.Session, evt *discordgo.Connect) {
-	fmt.Printf("[INFO] Shard #%v connected.\n", s.ShardID)
-}
-
-func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	// Ignore all messages created by the bot itself.
-	// This isn't required in this specific example but it's a good
-	// practice.
-	if m.Author.ID == s.State.User.ID {
-		return
-	}
-	logrus.Debug(m.Content)
-	// If the message is "ping" reply with "Pong!"
-	if m.Content == "ping" {
-		s.ChannelMessageSend(m.ChannelID, "Pong!")
-	}
-
-	// If the message is "pong" reply with "Ping!"
-	if m.Content == "pong" {
-		s.ChannelMessageSend(m.ChannelID, "Ping!")
-	}
-
-	// If the message is "restart" restart the shard manager and rescale
-	// if necessary, all with zero down-time.
-	if m.Content == "restart" {
-		var err error
-		s.ChannelMessageSend(m.ChannelID, "[INFO] Restarting shard manager...")
-		fmt.Println("[INFO] Restarting shard manager...")
-		Mgr, err = Mgr.Restart()
-		if err != nil {
-			fmt.Println("[ERROR] Error restarting manager,", err)
-		} else {
-			s.ChannelMessageSend(m.ChannelID, "[SUCCESS] Manager successfully restarted.")
-			fmt.Println("[SUCCESS] Manager successfully restarted.")
-		}
-	}
-}
-
-func runBotRoutine() {
-	go func() {
-		logrus.Debug("Launching Bot now...")
-		
-		// Create a new Discord session using the provided bot token.
-		Mgr, err := shards.New("Bot " + cfg.Token)
-		if err != nil {
-			fmt.Println("[ERROR] Error creating manager,", err)
 			return
 		}
-		
-		logrus.Debug("Bot Launched...")
-		
-		// Register the messageCreate func as a callback for MessageCreate events.
-		Mgr.AddHandler(messageCreate)
-		// Register the onConnect func as a callback for Connect events.
-		Mgr.AddHandler(onConnect)
-		
-		// In this example, we only care about receiving message events.
-		Mgr.RegisterIntent(discordgo.IntentsGuildMessages)
-		
-		fmt.Println("[INFO] Starting shard manager...")
-		
-		// Open a websocket connection to Discord and begin listening.
-		err = Mgr.Start()
-		if err != nil {
-			fmt.Println("[ERROR] Error starting manager,", err)
-			return
-		}
-		
-		// Wait here until CTRL-C or other term signal is received.
-		fmt.Println("[SUCCESS] Bot is now running. Press CTRL-C to exit.")
-		sc := make(chan os.Signal, 1)
-		signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
-		<-sc
-		
-		// Cleanly close down the Discord session.
-		fmt.Println("[INFO] Stopping shard manager...")
-		Mgr.Shutdown()
-		fmt.Println("[SUCCESS] Shard manager stopped. Bot is shut down.")
-	}()
+
+		// If the User-Agent is not from Discord, pass the request to the next handler
+		next.ServeHTTP(w, r)
+	})
 }
+
+// Legacy Discord handlers have been replaced by the new SlashCommandManager system
+// The new system provides:
+// - Proper slash command handling
+// - Permission management
+// - Server registration and management
+// - Error handling and recovery
+// - Comprehensive logging
