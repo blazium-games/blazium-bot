@@ -128,16 +128,80 @@ func registerAllCommands() error {
 		}
 	}
 
-	// Register shoyo command
-	if _, exists := CommandManager.GetCommand("shoyo"); !exists {
-		err := CommandManager.RegisterCommand("shoyo", &SlashCommandHandler{
-			Name:        "shoyo",
-			Description: "Shoyo.work portfolio platform information and coupon management",
-			Handler:     handleShoyoCommand,
-			Permissions: []string{"user"}, // All users can use shoyo, but different features based on permissions
+	if _, exists := CommandManager.GetCommand("crash"); !exists {
+		err := CommandManager.RegisterCommand("crash", &SlashCommandHandler{
+			Name:        "crash",
+			Description: "Staff crash report list, show, download, and analyze",
+			Handler:     handleCrashCommand,
+			Permissions: []string{"user"},
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "list",
+					Description: "List recent crash reports",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "app_id",
+							Description: "Filter by app id",
+							Required:    false,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "show",
+					Description: "Show crash report metadata",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "id",
+							Description: "Crash report id",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "download",
+					Description: "Get a private download link for a crash file",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "id",
+							Description: "Crash report id",
+							Required:    true,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "kind",
+							Description: "File kind",
+							Required:    true,
+							Choices: []*discordgo.ApplicationCommandOptionChoice{
+								{Name: "dump", Value: "dump"},
+								{Name: "log", Value: "log"},
+								{Name: "stack", Value: "stack"},
+							},
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "analyze",
+					Description: "Re-run stackwalk analysis",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "id",
+							Description: "Crash report id",
+							Required:    true,
+						},
+					},
+				},
+			},
 		})
 		if err != nil {
-			appLogger.Errorf("Failed to register shoyo command handler: %v", err)
+			appLogger.Errorf("Failed to register crash command handler: %v", err)
 		}
 	}
 
