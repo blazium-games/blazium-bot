@@ -372,9 +372,7 @@ func (m *SlashCommandManager) HandleInteraction(session *discordgo.Session, inte
 
 	// Only handle ApplicationCommand interactions (slash commands)
 	if interaction.Type != discordgo.InteractionApplicationCommand {
-		m.logger.Info("Non-slash command interaction, delegating to shoyo handler...")
-		// For other interaction types (buttons, modals), delegate to the appropriate handler
-		handleShoyoInteraction(session, interaction)
+		m.logger.Info("Non-slash command interaction ignored")
 		return
 	}
 
