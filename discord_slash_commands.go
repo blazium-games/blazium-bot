@@ -966,14 +966,33 @@ func (m *SlashCommandManager) validateAllCommands() error {
 // BuildCommandSlice creates a slice of Discord application commands
 func (m *SlashCommandManager) BuildCommandSlice() []*discordgo.ApplicationCommand {
 	commands := make([]*discordgo.ApplicationCommand, 0, len(m.commands))
+	dmFalse := false
 	for _, handler := range m.commands {
-		commands = append(commands, &discordgo.ApplicationCommand{
+		cmd := &discordgo.ApplicationCommand{
 			Name:        handler.Name,
 			Description: handler.Description,
 			Options:     handler.Options,
-		})
+		}
+		if commandRequiresAdmin(handler) {
+			admin := int64(discordgo.PermissionAdministrator)
+			cmd.DefaultMemberPermissions = &admin
+			cmd.DMPermission = &dmFalse
+		}
+		commands = append(commands, cmd)
 	}
 	return commands
+}
+
+func commandRequiresAdmin(handler *SlashCommandHandler) bool {
+	if handler == nil {
+		return false
+	}
+	for _, p := range handler.Permissions {
+		if p == "admin" {
+			return true
+		}
+	}
+	return false
 }
 
 // registerGlobalCommands registers commands globally

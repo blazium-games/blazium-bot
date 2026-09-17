@@ -30,10 +30,8 @@ func (c *CustomPermissionChecker) HasPermission(userID string, permission string
 	// For admin permission, we'll need to implement a different approach
 	// since we don't have access to the full interaction context here
 	if permission == "admin" {
-		// We'll need to modify this to work with just the user ID
-		// For now, let's return true to test if the permission system is working
-		appLogger.Infof("CustomPermissionChecker: Admin permission requested for user %s - temporarily allowing", userID)
-		return true, nil
+		appLogger.Warnf("CustomPermissionChecker: admin check without interaction context denied for user %s", userID)
+		return false, nil
 	}
 
 	return false, nil

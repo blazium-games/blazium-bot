@@ -29,7 +29,7 @@ func handleHelpCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 			},
 			{
 				Name:   "`/marketing`",
-				Value:  "Staff-only marketing stats, lookup, recent outreach, and campaigns",
+				Value:  "Staff-only marketing stats, lookup, recent outreach, and campaigns (admins included)",
 				Inline: false,
 			},
 		},
@@ -78,7 +78,7 @@ func hasAdminPermissions(s *discordgo.Session, i *discordgo.InteractionCreate) b
 	}
 
 	userRoles := i.Member.Roles
-	if len(userRoles) == 0 {
+	if s == nil || len(userRoles) == 0 {
 		return false
 	}
 

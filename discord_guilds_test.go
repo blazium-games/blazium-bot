@@ -38,3 +38,86 @@ func TestCollectGuildIDsNone(t *testing.T) {
 		t.Fatalf("expected empty, got %v", got)
 	}
 }
+
+func TestCommandRequiresAdmin(t *testing.T) {
+	if commandRequiresAdmin(&SlashCommandHandler{Permissions: []string{"user"}}) {
+		t.Fatal("user should not require admin")
+	}
+	if !commandRequiresAdmin(&SlashCommandHandler{Permissions: []string{"admin"}}) {
+		t.Fatal("admin should require admin")
+	}
+}
+
+func TestBuildCommandSliceAdminPermissions(t *testing.T) {
+	m := NewSlashCommandManager(&DefaultLogger{})
+	if err := m.RegisterCommand("secret", &SlashCommandHandler{
+		Name:        "secret",
+		Description: "Admin only",
+		Handler:     func(s *discordgo.Session, i *discordgo.InteractionCreate) {},
+		Permissions: []string{"admin"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RegisterCommand("marketing", &SlashCommandHandler{
+		Name:        "marketing",
+		Description: "Staff marketing",
+		Handler:     func(s *discordgo.Session, i *discordgo.InteractionCreate) {},
+		Permissions: []string{"user"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cmds := m.BuildCommandSlice()
+	var secret, marketing *discordgo.ApplicationCommand
+	for _, c := range cmds {
+		switch c.Name {
+		case "secret":
+			secret = c
+		case "marketing":
+			marketing = c
+		}
+	}
+	if secret == nil || secret.DefaultMemberPermissions == nil || *secret.DefaultMemberPermissions != int64(discordgo.PermissionAdministrator) {
+		t.Fatalf("admin commands should default to administrator: %+v", secret)
+	}
+	if marketing == nil || marketing.DefaultMemberPermissions != nil {
+		t.Fatalf("marketing must stay visible to staff without administrator: %+v", marketing)
+	}
+}
+
+func TestHasStaffAccessIncludesAdminAndStaffRole(t *testing.T) {
+	admin := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			Member: &discordgo.Member{
+				User:        &discordgo.User{ID: "1", Username: "admin"},
+				Permissions: discordgo.PermissionAdministrator,
+			},
+		},
+	}
+	if !hasStaffAccess(nil, admin) {
+		t.Fatal("administrators should have staff access")
+	}
+
+	t.Setenv("STAFF_ROLE_ID", "role-staff")
+	staff := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			Member: &discordgo.Member{
+				User:  &discordgo.User{ID: "2", Username: "staff"},
+				Roles: []string{"role-staff"},
+			},
+		},
+	}
+	if !hasStaffAccess(nil, staff) {
+		t.Fatal("staff role should have staff access")
+	}
+
+	user := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			Member: &discordgo.Member{
+				User: &discordgo.User{ID: "3", Username: "user"},
+			},
+		},
+	}
+	if hasStaffAccess(nil, user) {
+		t.Fatal("regular users should not have staff access")
+	}
+}
