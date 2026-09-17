@@ -752,9 +752,37 @@ func (m *SlashCommandManager) onReady(s *discordgo.Session, evt *discordgo.Ready
 		})
 
 		m.logger.Info("Bot is now Online and Playable! Slash commands synced to all known guilds.")
+		m.scheduleGuildCommandResync(s)
 	} else {
 		m.logger.Info("Shard #%d - Waiting for remaining shards to be ready (%d/%d)", s.ShardID, readyCount, totalShards)
 	}
+}
+
+var guildCommandResyncDelays = []time.Duration{30 * time.Second, 90 * time.Second}
+
+func (m *SlashCommandManager) scheduleGuildCommandResync(session *discordgo.Session) {
+	if session == nil {
+		return
+	}
+	go func() {
+		start := time.Now()
+		total := len(guildCommandResyncDelays)
+		for i, d := range guildCommandResyncDelays {
+			wait := d - time.Since(start)
+			if wait > 0 {
+				timer := time.NewTimer(wait)
+				<-timer.C
+			}
+			if m.getShuttingDown() {
+				m.logger.Info("Skipping follow-up slash command sync %d/%d - shutting down", i+1, total)
+				return
+			}
+			m.logger.Info("Follow-up slash command sync %d/%d", i+1, total)
+			if err := m.RegisterCommandsForAllGuilds(session); err != nil {
+				m.logger.Error("Follow-up slash command sync %d/%d failed: %v", i+1, total, err)
+			}
+		}
+	}()
 }
 
 // onDisconnect handles shard disconnection events

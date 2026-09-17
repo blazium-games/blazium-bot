@@ -3,6 +3,7 @@ package main
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 )
@@ -36,6 +37,13 @@ func TestCollectGuildIDsNone(t *testing.T) {
 	got := collectGuildIDs(nil, "")
 	if len(got) != 0 {
 		t.Fatalf("expected empty, got %v", got)
+	}
+}
+
+func TestGuildCommandResyncDelays(t *testing.T) {
+	want := []time.Duration{30 * time.Second, 90 * time.Second}
+	if !reflect.DeepEqual(guildCommandResyncDelays, want) {
+		t.Fatalf("got %v want %v", guildCommandResyncDelays, want)
 	}
 }
 
