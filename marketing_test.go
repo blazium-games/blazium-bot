@@ -338,3 +338,63 @@ func TestBotTablePrefix(t *testing.T) {
 		t.Fatalf("tables %s %s %s", tableProspects, tableEvents, tableOutreach)
 	}
 }
+
+func TestMarketingStatsAndInfoEmbed(t *testing.T) {
+	store := newMemMarketingStore()
+	p := &MarketingProspect{
+		Email:       "dev@studio.example",
+		DisplayName: "Jane",
+		Persona:     "godot_steam_unreleased",
+		Need:        "steam",
+		Source:      "steam",
+		Campaign:    "godot-4-steam-unreleased",
+		Status:      "new",
+		PublicURL:   "https://example.com",
+	}
+	if err := validateProspectInput(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.InsertProspect(p); err != nil {
+		t.Fatal(err)
+	}
+	ev := &MarketingEvent{Type: "send", Channel: "email", Subject: "hello", TouchNumber: 1, OccurredAt: time.Now().UTC()}
+	if err := validateEventInput(ev); err != nil {
+		t.Fatal(err)
+	}
+	marketingStore = store
+	onProspectCreated = func(*MarketingProspect) {}
+	onOutreachRecorded = func(*MarketingProspect, *MarketingOutreach) {}
+	t.Cleanup(func() {
+		marketingStore = nil
+		onProspectCreated = defaultOnProspectCreated
+		onOutreachRecorded = defaultOnOutreachRecorded
+	})
+	if _, _, err := recordEvent(p, ev); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Stats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Prospects != 1 || st.Outreach != 1 {
+		t.Fatalf("stats %+v", st)
+	}
+	if st.ByStatus["contacted"] != 1 {
+		t.Fatalf("status %+v", st.ByStatus)
+	}
+	if st.EventsByType["send"] != 1 {
+		t.Fatalf("events %+v", st.EventsByType)
+	}
+	if formatCountMap(st.ByCampaign, 8) == "none" {
+		t.Fatal("expected campaign counts")
+	}
+	got, err := store.GetProspect(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := store.ListOutreach(outreachFilters{ProspectID: p.ID, Limit: 5})
+	embed := buildMarketingInfoEmbed(got, rows)
+	if embed.Title != "Marketing entry" || !strings.Contains(formatOutreachList(rows), "hello") {
+		t.Fatalf("info embed %#v list %q", embed, formatOutreachList(rows))
+	}
+}

@@ -27,6 +27,11 @@ func handleHelpCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				Value:  "Staff-only crash report tools: list, show, download, analyze",
 				Inline: false,
 			},
+			{
+				Name:   "`/marketing`",
+				Value:  "Staff-only marketing stats, lookup, recent outreach, and campaigns",
+				Inline: false,
+			},
 		},
 		Footer: &discordgo.MessageEmbedFooter{
 			Text: "Blazium Bot - Use slash commands to interact with the bot",

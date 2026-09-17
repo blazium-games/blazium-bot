@@ -205,6 +205,87 @@ func registerAllCommands() error {
 		}
 	}
 
+	if _, exists := CommandManager.GetCommand("marketing"); !exists {
+		err := CommandManager.RegisterCommand("marketing", &SlashCommandHandler{
+			Name:        "marketing",
+			Description: "Staff marketing stats, lookup, and outreach history",
+			Handler:     handleMarketingCommand,
+			Permissions: []string{"user"},
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "stats",
+					Description: "Overall marketing analytics",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "lookup",
+					Description: "Show one prospect by id, email, or public URL",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "email",
+							Description: "Prospect email",
+							Required:    false,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "id",
+							Description: "Prospect id",
+							Required:    false,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "public_url",
+							Description: "Public project URL",
+							Required:    false,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "recent",
+					Description: "Latest outreach sends",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Name:        "limit",
+							Description: "How many rows (1-20)",
+							Required:    false,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "campaigns",
+					Description: "Prospect counts by campaign",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "outreach",
+					Description: "Outreach history for an email or prospect id",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "email",
+							Description: "Prospect email",
+							Required:    false,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "id",
+							Description: "Prospect id",
+							Required:    false,
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			appLogger.Errorf("Failed to register marketing command handler: %v", err)
+		}
+	}
+
 	appLogger.Infof("Successfully registered %d commands (guild-specific)", len(CommandManager.ListCommands()))
 	return nil
 }

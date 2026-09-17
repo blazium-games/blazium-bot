@@ -609,3 +609,61 @@ func (s *pgMarketingStore) ListOutreach(filters outreachFilters) ([]MarketingOut
 	}
 	return out, rows.Err()
 }
+
+func (s *pgMarketingStore) groupedCount(ctx context.Context, query string) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var key string
+		var n int
+		if err := rows.Scan(&key, &n); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(key) == "" {
+			key = "(none)"
+		}
+		out[key] = n
+	}
+	return out, rows.Err()
+}
+
+func (s *pgMarketingStore) Stats() (*MarketingStats, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	st := newMarketingStats()
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+tableProspects).Scan(&st.Prospects); err != nil {
+		return nil, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+tableOutreach).Scan(&st.Outreach); err != nil {
+		return nil, err
+	}
+	var last sql.NullTime
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(occurred_at) FROM `+tableOutreach).Scan(&last); err != nil {
+		return nil, err
+	}
+	if last.Valid {
+		t := last.Time.UTC()
+		st.LastOutreachAt = &t
+	}
+	var err error
+	if st.ByStatus, err = s.groupedCount(ctx, `SELECT COALESCE(status, ''), COUNT(*) FROM `+tableProspects+` GROUP BY 1`); err != nil {
+		return nil, err
+	}
+	if st.ByNeed, err = s.groupedCount(ctx, `SELECT COALESCE(need, ''), COUNT(*) FROM `+tableProspects+` GROUP BY 1`); err != nil {
+		return nil, err
+	}
+	if st.ByPersona, err = s.groupedCount(ctx, `SELECT COALESCE(persona, ''), COUNT(*) FROM `+tableProspects+` GROUP BY 1`); err != nil {
+		return nil, err
+	}
+	if st.ByCampaign, err = s.groupedCount(ctx, `SELECT COALESCE(campaign, ''), COUNT(*) FROM `+tableProspects+` GROUP BY 1`); err != nil {
+		return nil, err
+	}
+	if st.EventsByType, err = s.groupedCount(ctx, `SELECT COALESCE(type, ''), COUNT(*) FROM `+tableEvents+` GROUP BY 1`); err != nil {
+		return nil, err
+	}
+	return st, nil
+}

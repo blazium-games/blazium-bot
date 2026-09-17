@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -18,7 +19,19 @@ type MarketingStore interface {
 	InsertOutreach(o *MarketingOutreach) error
 	UpdateOutreachDiscordID(id, messageID string) error
 	ListOutreach(filters outreachFilters) ([]MarketingOutreach, error)
+	Stats() (*MarketingStats, error)
 	Close() error
+}
+
+type MarketingStats struct {
+	Prospects      int
+	Outreach       int
+	ByStatus       map[string]int
+	ByNeed         map[string]int
+	ByPersona      map[string]int
+	ByCampaign     map[string]int
+	EventsByType   map[string]int
+	LastOutreachAt *time.Time
 }
 
 var marketingStore MarketingStore
@@ -271,10 +284,87 @@ func (m *memMarketingStore) ListOutreach(filters outreachFilters) ([]MarketingOu
 	return out, nil
 }
 
+func (m *memMarketingStore) Stats() (*MarketingStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	st := newMarketingStats()
+	st.Prospects = len(m.prospects)
+	st.Outreach = len(m.outreach)
+	for _, p := range m.prospects {
+		bumpCount(st.ByStatus, p.Status)
+		bumpCount(st.ByNeed, p.Need)
+		bumpCount(st.ByPersona, p.Persona)
+		bumpCount(st.ByCampaign, p.Campaign)
+	}
+	for _, e := range m.events {
+		bumpCount(st.EventsByType, e.Type)
+	}
+	for _, o := range m.outreach {
+		if st.LastOutreachAt == nil || o.OccurredAt.After(*st.LastOutreachAt) {
+			t := o.OccurredAt
+			st.LastOutreachAt = &t
+		}
+	}
+	return st, nil
+}
+
 func lookupProspect(store MarketingStore, id, email, publicURL string) (*MarketingProspect, error) {
 	id = strings.TrimSpace(id)
 	if id != "" {
 		return store.GetProspect(id)
 	}
 	return store.Lookup(email, publicURL)
+}
+
+func newMarketingStats() *MarketingStats {
+	return &MarketingStats{
+		ByStatus:     map[string]int{},
+		ByNeed:       map[string]int{},
+		ByPersona:    map[string]int{},
+		ByCampaign:   map[string]int{},
+		EventsByType: map[string]int{},
+	}
+}
+
+func bumpCount(m map[string]int, key string) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		key = "(none)"
+	}
+	m[key]++
+}
+
+func formatCountMap(counts map[string]int, maxLines int) string {
+	if len(counts) == 0 {
+		return "none"
+	}
+	type kv struct {
+		k string
+		n int
+	}
+	rows := make([]kv, 0, len(counts))
+	for k, n := range counts {
+		rows = append(rows, kv{k, n})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].n == rows[j].n {
+			return rows[i].k < rows[j].k
+		}
+		return rows[i].n > rows[j].n
+	})
+	if maxLines <= 0 {
+		maxLines = 8
+	}
+	var b strings.Builder
+	for i, row := range rows {
+		if i >= maxLines {
+			fmt.Fprintf(&b, "… +%d more", len(rows)-maxLines)
+			break
+		}
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "%s: %d", row.k, row.n)
+	}
+	return b.String()
 }
