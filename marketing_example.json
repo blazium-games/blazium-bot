@@ -1,0 +1,29 @@
+{
+  "prospect": {
+    "email": "dev@studio.example",
+    "display_name": "Jane Dev",
+    "persona": "godot_steam_unreleased",
+    "engine_familiarity": "godot",
+    "need": "steam",
+    "project_name": "Dungeon Crawler",
+    "public_url": "https://store.steampowered.com/app/1234560",
+    "last_ship_date": "2025-11-01",
+    "tone": "peer",
+    "source": "steam",
+    "source_url": "https://store.steampowered.com/app/1234560",
+    "legal_ok": true,
+    "status": "new",
+    "campaign": "godot-4-steam-unreleased",
+    "tags": ["godot4", "steam"],
+    "notes": ""
+  },
+  "event": {
+    "type": "send",
+    "channel": "email",
+    "campaign": "godot-4-steam-unreleased",
+    "subject": "Godot-compatible editor with built-in lobbies",
+    "touch_number": 1,
+    "occurred_at": "2026-09-17T21:00:00Z",
+    "metadata": {}
+  }
+}

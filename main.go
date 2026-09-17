@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,7 +9,6 @@ import (
 	"syscall"
 
 	"github.com/gorilla/mux"
-	"github.com/joho/godotenv"
 	"github.com/servusdei2018/shards/v2"
 )
 
@@ -24,30 +22,35 @@ var (
 )
 
 func init() {
-	// Load environment variables from .env file
-	err := godotenv.Load()
-	if err != nil {
-		fmt.Printf("Error loading .env file: %v\n", err)
-	}
-
-	// Initialize the logger first
+	loadEnvFiles()
 	initLogger()
 
-	// Get the BOT_TOKEN from the environment
-	cfg = config{
-		Token: os.Getenv("DISCORD_TOKEN"),
+	token := os.Getenv("DISCORD_TOKEN")
+	if token == "" {
+		token = os.Getenv("DISCORD_BOT_TOKEN")
 	}
+	cfg = config{Token: token}
+	if token == "" {
+		appLogger.Warn("DISCORD_TOKEN is not set")
+		return
+	}
+	appLogger.Info("Configuration loaded successfully")
+}
+
+func main() {
+	appLogger.Info("Starting Blazium Bot...")
 
 	if cfg.Token == "" {
 		appLogger.Error("DISCORD_TOKEN is required but not set in the environment")
 		os.Exit(1)
 	}
 
-	appLogger.Info("Configuration loaded successfully")
-}
-
-func main() {
-	appLogger.Info("Starting Blazium Bot...")
+	initMarketing()
+	defer func() {
+		if marketingStore != nil {
+			_ = marketingStore.Close()
+		}
+	}()
 
 	// Create a new router using Gorilla Mux
 	r := mux.NewRouter()
@@ -67,6 +70,8 @@ func main() {
 		// Encode the response as JSON and send it
 		json.NewEncoder(w).Encode(response)
 	})
+
+	registerMarketingRoutes(r)
 
 	embedHandler := embedMiddleware(r)
 	corsHandler := enableCORS(embedHandler)
@@ -108,8 +113,8 @@ func enableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Set CORS headers
 		w.Header().Set("Access-Control-Allow-Origin", "*") // Allow all origins, you can restrict this to a specific domain
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Grokbot-Token")
 
 		// Handle preflight OPTIONS requests
 		if r.Method == "OPTIONS" {

@@ -1,5 +1,5 @@
 # Stage 1: Build the Go binary
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Set the working directory inside the container
 WORKDIR /app
@@ -18,6 +18,8 @@ RUN go build -o server .
 
 # Stage 2: Create a smaller image to run the binary
 FROM alpine:3.18
+
+RUN apk add --no-cache ca-certificates tzdata
 
 # Set the working directory inside the container
 WORKDIR /app
