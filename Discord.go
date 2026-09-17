@@ -300,7 +300,7 @@ func runDiscordBot() {
 		return
 	}
 
-	// Start the shard manager (this handles command registration automatically)
+	// Start the shard manager (guild create/delete handlers are attached before connect)
 	err := CommandManager.StartShards()
 	if err != nil {
 		appLogger.Errorf("Failed to start shard manager: %v", err)
@@ -309,9 +309,6 @@ func runDiscordBot() {
 
 	// Start shard monitoring
 	go monitorShardStatus()
-
-	// Set up guild event handlers
-	setupGuildEventHandlers()
 
 	appLogger.Info("Discord bot system initialized successfully")
 }
@@ -346,72 +343,34 @@ func monitorShardStatus() {
 	}
 }
 
-// setupGuildEventHandlers sets up handlers for guild events
-func setupGuildEventHandlers() {
-	if CommandManager == nil || CommandManager.shardManager == nil {
-		appLogger.Error("Command manager or shard manager not initialized")
-		return
-	}
-
-	// Get a session to add event handlers
-	session := CommandManager.shardManager.SessionForDM()
-	if session == nil {
-		appLogger.Error("No session available for event handlers")
-		return
-	}
-
-	// Add guild create handler (when bot joins a server)
-	session.AddHandler(handleGuildCreate)
-
-	// Add guild delete handler (when bot leaves a server)
-	session.AddHandler(handleGuildDelete)
-
-	appLogger.Info("Guild event handlers set up successfully")
-}
-
-// handleGuildCreate is called when the bot joins a new server
+// handleGuildCreate is called when the bot joins a server (including at startup).
 func handleGuildCreate(s *discordgo.Session, g *discordgo.GuildCreate) {
-	appLogger.Infof("Bot joined server: %s (%s)", g.Name, g.ID)
-
-	// Always clean up existing guild commands first to prevent duplicates
-	if CommandManager != nil {
-		go func() {
-			// Wait a moment for the guild to be fully available
-			time.Sleep(2 * time.Second)
-
-			// Clean up any existing commands in this guild
-			if err := CommandManager.CleanupGuildCommands(s, g.ID); err != nil {
-				appLogger.Errorf("Failed to cleanup commands for guild %s (%s): %v", g.Name, g.ID, err)
-			} else {
-				appLogger.Infof("Cleaned up existing commands for guild %s (%s)", g.Name, g.ID)
-			}
-
-			// Only register guild commands if we're not using global commands
-			if !CommandManager.config.GlobalCommands {
-				if err := CommandManager.RegisterCommandsForGuild(s, g.ID); err != nil {
-					appLogger.Errorf("Failed to register commands for guild %s (%s): %v", g.Name, g.ID, err)
-				} else {
-					appLogger.Infof("Successfully registered commands for guild %s (%s)", g.Name, g.ID)
-				}
-			} else {
-				appLogger.Infof("Global commands enabled - no need to register for guild %s (%s)", g.Name, g.ID)
-			}
-		}()
+	if g == nil || g.ID == "" {
+		return
 	}
+	appLogger.Infof("Bot joined server: %s (%s)", g.Name, g.ID)
+	if CommandManager == nil || CommandManager.config.GlobalCommands {
+		return
+	}
+	if err := CommandManager.RegisterCommandsForGuild(s, g.ID); err != nil {
+		appLogger.Errorf("Failed to register commands for guild %s (%s): %v", g.Name, g.ID, err)
+		return
+	}
+	appLogger.Infof("Successfully registered commands for guild %s (%s)", g.Name, g.ID)
 }
 
 // handleGuildDelete is called when the bot leaves a server
 func handleGuildDelete(s *discordgo.Session, g *discordgo.GuildDelete) {
-	appLogger.Infof("Bot left server: %s (%s)", g.Name, g.ID)
-
-	// Clean up guild-specific commands when bot leaves server
-	if CommandManager != nil && !CommandManager.config.GlobalCommands {
-		go func() {
-			if err := CommandManager.CleanupGuildCommands(s, g.ID); err != nil {
-				appLogger.Errorf("Failed to cleanup commands for guild %s (%s): %v", g.Name, g.ID, err)
-			} else {
-				appLogger.Infof("Cleaned up commands for guild %s (%s)", g.Name, g.ID)
-			}
-		}()
+	if g == nil || g.ID == "" {
+		return
 	}
+	appLogger.Infof("Bot left server: %s (%s)", g.Name, g.ID)
+	if CommandManager == nil || CommandManager.config.GlobalCommands {
+		return
+	}
+	if err := CommandManager.CleanupGuildCommands(s, g.ID); err != nil {
+		appLogger.Errorf("Failed to cleanup commands for guild %s (%s): %v", g.Name, g.ID, err)
+		return
+	}
+	appLogger.Infof("Cleaned up commands for guild %s (%s)", g.Name, g.ID)
 }

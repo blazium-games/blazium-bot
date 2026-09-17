@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -460,6 +461,8 @@ func (m *SlashCommandManager) StartShards() error {
 	m.shardManager.AddHandler(m.onReady)
 	m.shardManager.AddHandler(m.onDisconnect)
 	m.shardManager.AddHandler(m.onInteractionCreate)
+	m.shardManager.AddHandler(handleGuildCreate)
+	m.shardManager.AddHandler(handleGuildDelete)
 
 	// Register intents
 	m.shardManager.RegisterIntent(discordgo.IntentsGuildMessages | discordgo.IntentsGuilds | discordgo.IntentsDirectMessages)
@@ -741,57 +744,10 @@ func (m *SlashCommandManager) onReady(s *discordgo.Session, evt *discordgo.Ready
 	m.registrationMutex.Unlock()
 
 	if allReady {
-		// All shards are ready (commented out global command cleanup - using guild-specific registration)
-		m.logger.Info("All %d shards are now ready! Using guild-specific command registration...", totalShards)
-
-		// Skip global command cleanup and registration
-		/*
-			// Set activity to show cleanup
-			activity := &discordgo.Activity{
-				Name: "Cleaning Up Commands...",
-				Type: discordgo.ActivityTypeWatching,
-			}
-			s.UpdateStatusComplex(discordgo.UpdateStatusData{
-				Activities: []*discordgo.Activity{activity},
-				Status:     "dnd", // Do not disturb while cleaning
-			})
-
-			// Clean up ALL existing commands (global and guild-specific)
-			if err := m.CleanupAllCommands(s); err != nil {
-				m.logger.Warn("Failed to clean up all commands: %v", err)
-			}
-
-			// Update activity to show command registration
-			activity = &discordgo.Activity{
-				Name: "Registering Commands...",
-				Type: discordgo.ActivityTypeWatching,
-			}
-			s.UpdateStatusComplex(discordgo.UpdateStatusData{
-				Activities: []*discordgo.Activity{activity},
-				Status:     "dnd", // Do not disturb while registering
-			})
-
-			// Wait a moment to ensure stability
-			m.logger.Info("Waiting before registration...")
-			time.Sleep(2 * time.Second)
-
-			// Force-register commands with panic recovery (commented out - using guild-specific registration)
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						m.logger.Error("Panic during command registration: %v", r)
-						m.logger.Error("Stack trace: %s", debug.Stack())
-					}
-				}()
-
-				m.logger.Info("Force-registering commands (updating existing ones)...")
-				if err := m.RegisterWithDiscord(s); err != nil {
-					m.logger.Error("Failed to register commands: %v", err)
-				} else {
-					m.logger.Info("Successfully force-registered all commands")
-				}
-			}()
-		*/
+		m.logger.Info("All %d shards are now ready! Syncing guild-specific commands...", totalShards)
+		if err := m.RegisterCommandsForAllGuilds(s); err != nil {
+			m.logger.Error("Failed to sync slash commands to guilds: %v", err)
+		}
 
 		// Set final "Online and Playable" status
 		activity = &discordgo.Activity{
@@ -803,7 +759,7 @@ func (m *SlashCommandManager) onReady(s *discordgo.Session, evt *discordgo.Ready
 			Status:     "online", // Online and ready
 		})
 
-		m.logger.Info("Bot is now Online and Playable! Commands cleaned up and registered.")
+		m.logger.Info("Bot is now Online and Playable! Slash commands synced to all known guilds.")
 	} else {
 		m.logger.Info("Shard #%d - Waiting for remaining shards to be ready (%d/%d)", s.ShardID, readyCount, totalShards)
 	}
@@ -1045,6 +1001,73 @@ func (m *SlashCommandManager) registerGlobalCommands(session *discordgo.Session,
 	}
 
 	return nil
+}
+
+// collectGuildIDs returns unique guild IDs from session state, skipping empty
+// and unavailable guilds. extraID is included when set (DISCORD_GUILD_ID).
+func collectGuildIDs(guilds []*discordgo.Guild, extraID string) []string {
+	seen := make(map[string]bool)
+	ids := make([]string, 0, len(guilds)+1)
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	for _, g := range guilds {
+		if g == nil || g.Unavailable || strings.TrimSpace(g.ID) == "" {
+			continue
+		}
+		add(g.ID)
+	}
+	add(extraID)
+	return ids
+}
+
+// RegisterCommandsForAllGuilds bulk-overwrites slash commands on every known guild.
+func (m *SlashCommandManager) RegisterCommandsForAllGuilds(session *discordgo.Session) error {
+	if session == nil {
+		return fmt.Errorf("discord session cannot be nil")
+	}
+	if m.config != nil && m.config.GlobalCommands {
+		return m.RegisterWithDiscord(session)
+	}
+
+	var guilds []*discordgo.Guild
+	if session.State != nil {
+		guilds = session.State.Guilds
+	}
+	extra := ""
+	if m.config != nil {
+		extra = m.config.GuildID
+	}
+	ids := collectGuildIDs(guilds, extra)
+	if len(ids) == 0 {
+		m.logger.Warn("No guilds available to sync slash commands")
+		return nil
+	}
+
+	m.logger.Info("Syncing slash commands to %d guild(s)", len(ids))
+	var firstErr error
+	for _, id := range ids {
+		label := id
+		if session.State != nil {
+			if g, err := session.State.Guild(id); err == nil && g != nil && g.Name != "" {
+				label = fmt.Sprintf("%s (%s)", g.Name, id)
+			}
+		}
+		if err := m.RegisterCommandsForGuild(session, id); err != nil {
+			m.logger.Error("Failed to register commands for guild %s: %v", label, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		m.logger.Info("Synced commands to guild %s", label)
+	}
+	return firstErr
 }
 
 // registerGuildCommands registers commands for a specific guild
