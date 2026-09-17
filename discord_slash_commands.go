@@ -52,10 +52,11 @@ type SlashCommandManager struct {
 	shardManager       *shards.Manager                 // Shard manager for multi-shard support
 	readyShards        map[int]bool                    // Track which shards are ready
 	shardsMutex        sync.RWMutex                    // Mutex for thread-safe access to shard state
-	commandsRegistered bool                            // Track if commands have been registered
-	registrationMutex  sync.Mutex                      // Mutex for command registration
-	isShuttingDown     bool                            // Track if the bot is shutting down
-	shutdownMutex      sync.RWMutex                    // Mutex for shutdown state
+	commandsRegistered  bool         // Track if commands have been registered
+	registrationMutex   sync.Mutex   // Mutex for command registration
+	guildOverwriteMutex sync.Mutex   // Serialize Discord guild command PUTs
+	isShuttingDown      bool         // Track if the bot is shutting down
+	shutdownMutex       sync.RWMutex // Mutex for shutdown state
 }
 
 // CommandConfig holds configuration for the slash command system
@@ -485,19 +486,10 @@ func (m *SlashCommandManager) StopShards() error {
 
 	m.logger.Info("Stopping shard manager...")
 
-	// Mark as shutting down to prevent auto-reconnection
+	// Mark as shutting down to prevent auto-reconnection.
+	// Do not delete guild slash commands here: a rolling deploy's old
+	// replica would wipe commands the new replica just registered.
 	m.setShuttingDown(true)
-
-	// Clean up ALL commands (global and guild-specific) before shutdown
-	session := m.shardManager.SessionForDM()
-	if session != nil {
-		m.logger.Info("Cleaning up all commands before shutdown...")
-		if err := m.CleanupAllCommands(session); err != nil {
-			m.logger.Warn("Failed to cleanup all commands during shutdown: %v", err)
-		} else {
-			m.logger.Info("Successfully cleaned up all commands before shutdown")
-		}
-	}
 
 	// Shutdown the shard manager
 	m.shardManager.Shutdown()
@@ -969,6 +961,7 @@ func (m *SlashCommandManager) BuildCommandSlice() []*discordgo.ApplicationComman
 	dmFalse := false
 	for _, handler := range m.commands {
 		cmd := &discordgo.ApplicationCommand{
+			Type:        discordgo.ChatApplicationCommand,
 			Name:        handler.Name,
 			Description: handler.Description,
 			Options:     handler.Options,
@@ -1089,18 +1082,88 @@ func (m *SlashCommandManager) RegisterCommandsForAllGuilds(session *discordgo.Se
 	return firstErr
 }
 
-// registerGuildCommands registers commands for a specific guild
-func (m *SlashCommandManager) registerGuildCommands(session *discordgo.Session, commands []*discordgo.ApplicationCommand) error {
-	m.logger.Info("Registering %d commands for guild %s", len(commands), m.config.GuildID)
+func sessionApplicationID(session *discordgo.Session) string {
+	if session == nil || session.State == nil || session.State.User == nil {
+		return ""
+	}
+	return session.State.User.ID
+}
 
-	// Use bulk overwrite for efficiency
-	_, err := session.ApplicationCommandBulkOverwrite(session.State.User.ID, m.config.GuildID, commands)
+func verifyBulkOverwrite(want int, created []*discordgo.ApplicationCommand) error {
+	n := 0
+	for _, cmd := range created {
+		if cmd != nil {
+			n++
+		}
+	}
+	if n == 0 {
+		return fmt.Errorf("discord bulk overwrite returned no commands")
+	}
+	if want > 0 && n != want {
+		return fmt.Errorf("discord bulk overwrite returned %d commands, want %d", n, want)
+	}
+	return nil
+}
+
+func (m *SlashCommandManager) logPersistedCommands(appID, guildID string, created []*discordgo.ApplicationCommand) {
+	m.logger.Info("Bot application ID: %s", appID)
+	for _, cmd := range created {
+		if cmd == nil {
+			continue
+		}
+		m.logger.Info("Discord persisted command %s (ID: %s) for guild %s", cmd.Name, cmd.ID, guildID)
+	}
+}
+
+func (m *SlashCommandManager) confirmGuildCommands(session *discordgo.Session, appID, guildID string, want int) error {
+	live, err := session.ApplicationCommands(appID, guildID)
 	if err != nil {
-		return fmt.Errorf("failed to register guild commands: %w", err)
+		m.logger.Warn("Could not GET guild commands for %s after overwrite: %v", guildID, err)
+		return nil
+	}
+	for _, cmd := range live {
+		if cmd == nil {
+			continue
+		}
+		m.logger.Info("Live guild command %s (ID: %s) on %s", cmd.Name, cmd.ID, guildID)
+	}
+	if err := verifyBulkOverwrite(want, live); err != nil {
+		return fmt.Errorf("guild %s live command list: %w", guildID, err)
+	}
+	return nil
+}
+
+func (m *SlashCommandManager) overwriteGuildCommands(session *discordgo.Session, guildID string, commands []*discordgo.ApplicationCommand) error {
+	m.guildOverwriteMutex.Lock()
+	defer m.guildOverwriteMutex.Unlock()
+
+	appID := sessionApplicationID(session)
+	if appID == "" {
+		return fmt.Errorf("discord session has no application ID")
 	}
 
-	m.logger.Info("Successfully registered guild commands")
+	m.logger.Info("Registering %d commands for guild %s as application %s", len(commands), guildID, appID)
+	created, err := session.ApplicationCommandBulkOverwrite(appID, guildID, commands)
+	if err != nil {
+		return fmt.Errorf("failed to register commands for guild %s: %w", guildID, err)
+	}
+	if err := verifyBulkOverwrite(len(commands), created); err != nil {
+		return fmt.Errorf("guild %s: %w", guildID, err)
+	}
+	m.logPersistedCommands(appID, guildID, created)
+	if err := m.confirmGuildCommands(session, appID, guildID, len(commands)); err != nil {
+		return err
+	}
+	m.logger.Info("Successfully registered %d commands for guild %s", len(created), guildID)
 	return nil
+}
+
+// registerGuildCommands registers commands for a specific guild
+func (m *SlashCommandManager) registerGuildCommands(session *discordgo.Session, commands []*discordgo.ApplicationCommand) error {
+	if m.config == nil || m.config.GuildID == "" {
+		return fmt.Errorf("guild ID cannot be empty")
+	}
+	return m.overwriteGuildCommands(session, m.config.GuildID, commands)
 }
 
 // RegisterCommandsForGuild registers commands for a specific guild
@@ -1113,19 +1176,7 @@ func (m *SlashCommandManager) RegisterCommandsForGuild(session *discordgo.Sessio
 		return fmt.Errorf("guild ID cannot be empty")
 	}
 
-	m.logger.Info("Registering commands for guild %s", guildID)
-
-	// Build command slice for Discord API
-	commands := m.BuildCommandSlice()
-
-	// Use bulk overwrite for efficiency
-	_, err := session.ApplicationCommandBulkOverwrite(session.State.User.ID, guildID, commands)
-	if err != nil {
-		return fmt.Errorf("failed to register commands for guild %s: %w", guildID, err)
-	}
-
-	m.logger.Info("Successfully registered %d commands for guild %s", len(commands), guildID)
-	return nil
+	return m.overwriteGuildCommands(session, guildID, m.BuildCommandSlice())
 }
 
 // CleanupGuildCommands removes all commands from a specific guild

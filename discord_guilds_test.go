@@ -82,6 +82,31 @@ func TestBuildCommandSliceAdminPermissions(t *testing.T) {
 	if marketing == nil || marketing.DefaultMemberPermissions != nil {
 		t.Fatalf("marketing must stay visible to staff without administrator: %+v", marketing)
 	}
+	if marketing.Type != discordgo.ChatApplicationCommand {
+		t.Fatalf("marketing type want ChatInput got %d", marketing.Type)
+	}
+	if secret.Type != discordgo.ChatApplicationCommand {
+		t.Fatalf("secret type want ChatInput got %d", secret.Type)
+	}
+}
+
+func TestVerifyBulkOverwrite(t *testing.T) {
+	if err := verifyBulkOverwrite(2, nil); err == nil {
+		t.Fatal("empty overwrite should fail")
+	}
+	if err := verifyBulkOverwrite(2, []*discordgo.ApplicationCommand{}); err == nil {
+		t.Fatal("empty overwrite slice should fail")
+	}
+	created := []*discordgo.ApplicationCommand{
+		{Name: "help", ID: "1"},
+		{Name: "test", ID: "2"},
+	}
+	if err := verifyBulkOverwrite(2, created); err != nil {
+		t.Fatalf("matching overwrite should succeed: %v", err)
+	}
+	if err := verifyBulkOverwrite(3, created); err == nil {
+		t.Fatal("count mismatch should fail")
+	}
 }
 
 func TestHasStaffAccessIncludesAdminAndStaffRole(t *testing.T) {

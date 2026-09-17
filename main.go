@@ -99,7 +99,7 @@ func main() {
 	// Gracefully shutdown
 	appLogger.Info("Shutdown signal received. Stopping bot...")
 	if CommandManager != nil {
-		appLogger.Info("Cleaning up commands and shutting down...")
+		appLogger.Info("Stopping Discord shards...")
 		if err := CommandManager.StopShards(); err != nil {
 			appLogger.Errorf("Error stopping shard manager: %v", err)
 		} else {
