@@ -46,11 +46,12 @@ func main() {
 	}
 
 	initMarketing()
-	defer func() {
-		if marketingStore != nil {
-			_ = marketingStore.Close()
-		}
-	}()
+	initSignupPanels()
+	initTickets()
+	initForms()
+	initServerTools()
+	initReminders()
+	defer closeBotDatabase()
 
 	// Create a new router using Gorilla Mux
 	r := mux.NewRouter()

@@ -39,6 +39,9 @@ type SlashCommandHandler struct {
 	Handler     func(s *discordgo.Session, i *discordgo.InteractionCreate) // Function to execute when command is used
 	Permissions []string                                                   // Required permissions ("admin", "moderator", "user", etc.)
 	GuildOnly   bool                                                       // Whether command only works in guilds (not DMs)
+	// DefaultPermissions, when set, is who sees the command by default (a Discord permission bit set,
+	// e.g. Manage Server). Server admins can change it in Server Settings > Integrations.
+	DefaultPermissions *int64
 }
 
 // SlashCommandManager manages all slash commands for a Discord bot
@@ -357,6 +360,11 @@ func (m *SlashCommandManager) UnregisterFromDiscord(session *discordgo.Session) 
 // HandleInteraction processes Discord slash command interactions
 // This should be called from your bot's interaction handler
 func (m *SlashCommandManager) HandleInteraction(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
+	// Buttons, pop-ups and autocomplete are routed in interactions.go.
+	if dispatchNonCommandInteraction(session, interaction) {
+		return
+	}
+
 	m.logger.Info("=== INTERACTION RECEIVED ===")
 	m.logger.Info("Interaction Type: %d (%s)", interaction.Type, interactionTypeToString(interaction.Type))
 	m.logger.Info("Interaction ID: %s", interaction.ID)
@@ -464,9 +472,14 @@ func (m *SlashCommandManager) StartShards() error {
 	m.shardManager.AddHandler(m.onInteractionCreate)
 	m.shardManager.AddHandler(handleGuildCreate)
 	m.shardManager.AddHandler(handleGuildDelete)
+	m.shardManager.AddHandler(handleSignupRoleDelete)
+	for _, h := range serverEventHandlers() {
+		m.shardManager.AddHandler(h)
+	}
 
 	// Register intents
-	m.shardManager.RegisterIntent(discordgo.IntentsGuildMessages | discordgo.IntentsGuilds | discordgo.IntentsDirectMessages)
+	// Privileged intents are only asked for when the host turns them on (see server_events.go).
+	m.shardManager.RegisterIntent(botIntents())
 
 	// Start the shard manager
 	err := m.shardManager.Start()
@@ -998,6 +1011,12 @@ func (m *SlashCommandManager) BuildCommandSlice() []*discordgo.ApplicationComman
 			admin := int64(discordgo.PermissionAdministrator)
 			cmd.DefaultMemberPermissions = &admin
 			cmd.DMPermission = &dmFalse
+		} else if handler.DefaultPermissions != nil {
+			perms := *handler.DefaultPermissions
+			cmd.DefaultMemberPermissions = &perms
+		}
+		if handler.GuildOnly {
+			cmd.DMPermission = &dmFalse
 		}
 		commands = append(commands, cmd)
 	}
@@ -1314,7 +1333,9 @@ func (m *SlashCommandManager) executeCommand(session *discordgo.Session, interac
 			if r := recover(); r != nil {
 				m.logger.Error("💥 Command %s panicked: %v", handler.Name, r)
 				m.logger.Error("Stack trace: %s", debug.Stack())
-				m.markCommandAsBroken(handler.Name)
+				// A panic is usually one bad input, so the command stays on for everyone else;
+				// the member gets a polite reply instead of "the application did not respond".
+				replyEphemeral(session, interaction, "Something went wrong running this command. Please try again, or let an admin know.")
 				done <- false
 			} else {
 				m.logger.Info("✅ Command %s executed successfully", handler.Name)
@@ -1332,14 +1353,14 @@ func (m *SlashCommandManager) executeCommand(session *discordgo.Session, interac
 	select {
 	case success := <-done:
 		if !success {
-			m.logger.Error("❌ Command %s failed and was marked as broken", handler.Name)
+			m.logger.Error("❌ Command %s failed", handler.Name)
 		} else {
 			m.logger.Info("✅ Command %s completed successfully", handler.Name)
 		}
 	case <-time.After(m.config.CommandTimeout):
-		m.logger.Error("⏰ Command %s timed out after %v", handler.Name, m.config.CommandTimeout)
-		m.markCommandAsBroken(handler.Name)
-		m.sendErrorResponse(session, interaction, "Command timed out. Please try again later.")
+		// Slow Discord or database calls can outlast the timeout; the handler keeps running
+		// and answers when it can, so the command is not switched off for everyone.
+		m.logger.Error("⏰ Command %s is still running after %v", handler.Name, m.config.CommandTimeout)
 	}
 }
 

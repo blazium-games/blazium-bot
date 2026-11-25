@@ -23,7 +23,12 @@ func initMarketing() {
 		appLogger.Warn("POSTGRES_CON_STRING is not set; marketing API disabled")
 		return
 	}
-	store, err := newPostgresMarketingStore(marketingCfg.connString)
+	db := botDatabase()
+	if db == nil {
+		appLogger.Warn("Postgres is unavailable; marketing API disabled")
+		return
+	}
+	store, err := newPostgresMarketingStore(db)
 	if err != nil {
 		appLogger.Errorf("marketing postgres unavailable: %v", err)
 		return

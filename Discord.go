@@ -284,6 +284,15 @@ func registerAllCommands() error {
 		}
 	}
 
+	registerSignupPanels()
+	registerTickets()
+	registerForms()
+	registerModeration()
+	registerServerSettings()
+	registerUtility()
+	registerAnnounce()
+	registerReminders()
+
 	appLogger.Infof("Successfully registered %d commands (guild-specific)", len(CommandManager.ListCommands()))
 	return nil
 }
