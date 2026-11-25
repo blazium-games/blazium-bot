@@ -39,6 +39,9 @@ type SlashCommandHandler struct {
 	Handler     func(s *discordgo.Session, i *discordgo.InteractionCreate) // Function to execute when command is used
 	Permissions []string                                                   // Required permissions ("admin", "moderator", "user", etc.)
 	GuildOnly   bool                                                       // Whether command only works in guilds (not DMs)
+	// DefaultPermissions, when set, is who sees the command by default (a Discord permission bit set,
+	// e.g. Manage Server). Server admins can change it in Server Settings > Integrations.
+	DefaultPermissions *int64
 }
 
 // SlashCommandManager manages all slash commands for a Discord bot
@@ -357,6 +360,11 @@ func (m *SlashCommandManager) UnregisterFromDiscord(session *discordgo.Session) 
 // HandleInteraction processes Discord slash command interactions
 // This should be called from your bot's interaction handler
 func (m *SlashCommandManager) HandleInteraction(session *discordgo.Session, interaction *discordgo.InteractionCreate) {
+	// Buttons, pop-ups and autocomplete are routed in interactions.go.
+	if dispatchNonCommandInteraction(session, interaction) {
+		return
+	}
+
 	m.logger.Info("=== INTERACTION RECEIVED ===")
 	m.logger.Info("Interaction Type: %d (%s)", interaction.Type, interactionTypeToString(interaction.Type))
 	m.logger.Info("Interaction ID: %s", interaction.ID)
@@ -464,6 +472,7 @@ func (m *SlashCommandManager) StartShards() error {
 	m.shardManager.AddHandler(m.onInteractionCreate)
 	m.shardManager.AddHandler(handleGuildCreate)
 	m.shardManager.AddHandler(handleGuildDelete)
+	m.shardManager.AddHandler(handleSignupRoleDelete)
 
 	// Register intents
 	m.shardManager.RegisterIntent(discordgo.IntentsGuildMessages | discordgo.IntentsGuilds | discordgo.IntentsDirectMessages)
@@ -997,6 +1006,12 @@ func (m *SlashCommandManager) BuildCommandSlice() []*discordgo.ApplicationComman
 		if commandRequiresAdmin(handler) {
 			admin := int64(discordgo.PermissionAdministrator)
 			cmd.DefaultMemberPermissions = &admin
+			cmd.DMPermission = &dmFalse
+		} else if handler.DefaultPermissions != nil {
+			perms := *handler.DefaultPermissions
+			cmd.DefaultMemberPermissions = &perms
+		}
+		if handler.GuildOnly {
 			cmd.DMPermission = &dmFalse
 		}
 		commands = append(commands, cmd)

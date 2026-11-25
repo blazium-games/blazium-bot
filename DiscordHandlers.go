@@ -32,6 +32,26 @@ func handleHelpCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				Value:  "Staff-only marketing stats, lookup, recent outreach, and campaigns (admins included)",
 				Inline: false,
 			},
+			{
+				Name:   "`/panel`",
+				Value:  "Staff (Manage Server): sign-up panels, messages with buttons that give members roles. create, add-role, remove-role, edit, move, refresh, list, delete",
+				Inline: false,
+			},
+			{
+				Name:   "`/tickettype`",
+				Value:  "Staff (Manage Server): set up ticket types with their category, staff roles, log channel, intake questions and buttons",
+				Inline: false,
+			},
+			{
+				Name:   "`/ticket`",
+				Value:  "Inside a ticket: close (the opener or staff), claim, add, remove, rename (staff). Staff: list tickets, post a panel of ticket types and forms",
+				Inline: false,
+			},
+			{
+				Name:   "`/form`",
+				Value:  "Staff (Manage Server): forms members fill in, like game jam entries or sign-ups, with optional accept/decline review. create, edit, question, show, post, submissions, view",
+				Inline: false,
+			},
 		},
 		Footer: &discordgo.MessageEmbedFooter{
 			Text: "Blazium Bot - Use slash commands to interact with the bot",
