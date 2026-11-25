@@ -32,6 +32,11 @@ func handleHelpCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				Value:  "Staff-only marketing stats, lookup, recent outreach, and campaigns (admins included)",
 				Inline: false,
 			},
+			{
+				Name:   "`/panel`",
+				Value:  "Staff (Manage Server): sign-up panels, messages with buttons that give members roles. create, add-role, remove-role, edit, move, refresh, list, delete",
+				Inline: false,
+			},
 		},
 		Footer: &discordgo.MessageEmbedFooter{
 			Text: "Blazium Bot - Use slash commands to interact with the bot",
