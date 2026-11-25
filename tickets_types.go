@@ -58,6 +58,7 @@ func runTicketTypeSubcommand(s *discordgo.Session, i *discordgo.InteractionCreat
 	if err != nil {
 		return "", err
 	}
+	q := questionTarget{name: tt.Name, header: tt.Header != "", store: ticketQuestionStore{tt.ID}, showCmd: "/tickettype show"}
 	switch name {
 	case "edit":
 		return typeEdit(s, i, opts, tt)
@@ -66,11 +67,11 @@ func runTicketTypeSubcommand(s *discordgo.Session, i *discordgo.InteractionCreat
 	case "post":
 		return typePost(s, i, opts, tt)
 	case "question add":
-		return questionAdd(opts, tt)
+		return q.add(opts)
 	case "question remove":
-		return questionRemove(opts, tt)
+		return q.remove(opts)
 	case "question move":
-		return questionMove(opts, tt)
+		return q.move(opts)
 	}
 	return "", userErrorf("Unknown subcommand.")
 }
@@ -350,7 +351,7 @@ func typePost(s *discordgo.Session, i *discordgo.InteractionCreate, opts cmdOpts
 	}
 	_, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
 		Embeds:          []*discordgo.MessageEmbed{{Title: "🎫 " + tt.Name, Description: intro, Color: ticketColor}},
-		Components:      ticketPanelButtons([]ticketType{*tt}),
+		Components:      panelButtons([]panelItem{ticketItem(*tt)}, false),
 		AllowedMentions: &discordgo.MessageAllowedMentions{},
 	})
 	if err != nil {
@@ -361,111 +362,6 @@ func typePost(s *discordgo.Session, i *discordgo.InteractionCreate, opts cmdOpts
 		note = " It's closed to new tickets for now: open it with `/tickettype edit open:True`."
 	}
 	return fmt.Sprintf("✅ Posted **%s** in <#%s>.%s", tt.Name, channelID, note), nil
-}
-
-// ---- questions -----------------------------------------------------------------------------
-
-func questionAdd(opts cmdOpts, tt *ticketType) (string, error) {
-	existing, err := tickets.Questions(tt.ID)
-	if err != nil {
-		return "", err
-	}
-	if len(existing) >= formMaxQuestions {
-		return "", userErrorf("A ticket type can have at most %d questions.", formMaxQuestions)
-	}
-	label, _ := optString(opts, "question")
-	label = strings.TrimSpace(label)
-	kind, ok := optString(opts, "kind")
-	if !ok {
-		kind = kindShort
-	}
-	required, ok := optBool(opts, "required")
-	if !ok {
-		required = true
-	}
-	help, _ := optString(opts, "help")
-	help = strings.TrimSpace(help)
-	choicesText, _ := optString(opts, "choices")
-	choices := parseChoices(choicesText)
-	maxLength, _ := optInt(opts, "max_length")
-	if problems := questionProblems(label, kind, help, choices, int(maxLength)); len(problems) > 0 {
-		return "", userErrorf("%s", strings.Join(problems, "\n"))
-	}
-	q := formQuestion{Label: label, Kind: kind, Required: required, Help: help, Choices: choices, MaxLength: int(maxLength)}
-	if err := tickets.AddQuestion(tt.ID, q); err != nil {
-		return "", err
-	}
-	count := len(existing) + 1
-	pages := len(formPages(append(existing, q), tt.Header != ""))
-	return fmt.Sprintf("✅ Question %d added to **%s**: %s (%s). Members now answer %d question(s) on %d pop-up(s) before their ticket opens.",
-		count, tt.Name, label, kindName(kind), count, pages), nil
-}
-
-// numberedQuestion is question number (from 1) of a ticket type.
-func numberedQuestion(tt *ticketType, number int64) ([]formQuestion, formQuestion, error) {
-	questions, err := tickets.Questions(tt.ID)
-	if err != nil {
-		return nil, formQuestion{}, err
-	}
-	if number < 1 || int(number) > len(questions) {
-		if len(questions) == 0 {
-			return nil, formQuestion{}, userErrorf("**%s** has no questions yet.", tt.Name)
-		}
-		return nil, formQuestion{}, userErrorf("**%s** has questions 1 to %d. `/tickettype show` lists them.", tt.Name, len(questions))
-	}
-	return questions, questions[number-1], nil
-}
-
-func questionRemove(opts cmdOpts, tt *ticketType) (string, error) {
-	number, _ := optInt(opts, "number")
-	questions, q, err := numberedQuestion(tt, number)
-	if err != nil {
-		return "", err
-	}
-	if err := tickets.RemoveQuestion(tt.ID, q.ID); err != nil {
-		return "", err
-	}
-	var order []int64
-	for _, other := range questions {
-		if other.ID != q.ID {
-			order = append(order, other.ID)
-		}
-	}
-	if err := tickets.ReorderQuestions(tt.ID, order); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("✅ Removed question %d (%s) from **%s**. Tickets already open keep their answers.", number, q.Label, tt.Name), nil
-}
-
-func questionMove(opts cmdOpts, tt *ticketType) (string, error) {
-	number, _ := optInt(opts, "number")
-	to, _ := optInt(opts, "to")
-	questions, q, err := numberedQuestion(tt, number)
-	if err != nil {
-		return "", err
-	}
-	if to < 1 || int(to) > len(questions) {
-		return "", userErrorf("Pick a new number from 1 to %d.", len(questions))
-	}
-	if err := tickets.ReorderQuestions(tt.ID, moveID(questions, q.ID, int(to))); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("✅ Moved \"%s\" to number %d on **%s**.", q.Label, to, tt.Name), nil
-}
-
-// moveID is the question IDs in order with id moved to position to (from 1).
-func moveID(questions []formQuestion, id int64, to int) []int64 {
-	var order []int64
-	for _, q := range questions {
-		if q.ID != id {
-			order = append(order, q.ID)
-		}
-	}
-	at := to - 1
-	order = append(order, 0)
-	copy(order[at+1:], order[at:])
-	order[at] = id
-	return order
 }
 
 // ---- delete: confirm with buttons ------------------------------------------------------------

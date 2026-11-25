@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
 )
@@ -155,59 +154,19 @@ func (s *pgTicketsStore) DeleteType(id int64) error {
 }
 
 func (s *pgTicketsStore) Questions(typeID int64) ([]formQuestion, error) {
-	ctx, cancel := dbCtx()
-	defer cancel()
-	rows, err := s.db.QueryContext(ctx, `SELECT id, label, kind, required, help, choices, max_length FROM `+
-		tableTicketQuestions+` WHERE type_id = $1 ORDER BY position, id`, typeID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []formQuestion{}
-	for rows.Next() {
-		var q formQuestion
-		var choices []byte
-		if err := rows.Scan(&q.ID, &q.Label, &q.Kind, &q.Required, &q.Help, &choices, &q.MaxLength); err != nil {
-			return nil, err
-		}
-		_ = json.Unmarshal(choices, &q.Choices)
-		out = append(out, q)
-	}
-	return out, rows.Err()
+	return pgQuestions(s.db, tableTicketQuestions, "type_id", typeID)
 }
 
 func (s *pgTicketsStore) AddQuestion(typeID int64, q formQuestion) error {
-	ctx, cancel := dbCtx()
-	defer cancel()
-	choices, _ := json.Marshal(append([]string{}, q.Choices...))
-	_, err := s.db.ExecContext(ctx, `INSERT INTO `+tableTicketQuestions+` (type_id, position, label, kind, required, help, choices, max_length)
-		VALUES ($1, (SELECT COALESCE(MAX(position) + 1, 0) FROM `+tableTicketQuestions+` WHERE type_id = $1), $2, $3, $4, $5, $6, $7)`,
-		typeID, q.Label, q.Kind, q.Required, q.Help, string(choices), q.MaxLength)
-	return err
+	return pgAddQuestion(s.db, tableTicketQuestions, "type_id", typeID, q)
 }
 
 func (s *pgTicketsStore) RemoveQuestion(typeID, questionID int64) error {
-	ctx, cancel := dbCtx()
-	defer cancel()
-	_, err := s.db.ExecContext(ctx, `DELETE FROM `+tableTicketQuestions+` WHERE id = $1 AND type_id = $2`, questionID, typeID)
-	return err
+	return pgRemoveQuestion(s.db, tableTicketQuestions, "type_id", typeID, questionID)
 }
 
 func (s *pgTicketsStore) ReorderQuestions(typeID int64, ids []int64) error {
-	ctx, cancel := dbCtx()
-	defer cancel()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	for position, id := range ids {
-		if _, err := tx.ExecContext(ctx, `UPDATE `+tableTicketQuestions+` SET position = $1 WHERE id = $2 AND type_id = $3`,
-			position, id, typeID); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	return pgReorderQuestions(s.db, tableTicketQuestions, "type_id", typeID, ids)
 }
 
 func (s *pgTicketsStore) StaffRoles(typeID int64) ([]string, error) {

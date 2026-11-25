@@ -94,14 +94,14 @@ type memTicketsStore struct {
 	mu        sync.Mutex
 	next      int64
 	types     map[int64]*ticketType
-	questions map[int64][]formQuestion
+	questions questionLists
 	staff     map[int64][]string
 	tickets   map[int64]*ticket
 }
 
 func newMemTicketsStore() *memTicketsStore {
 	return &memTicketsStore{
-		types: map[int64]*ticketType{}, questions: map[int64][]formQuestion{},
+		types: map[int64]*ticketType{}, questions: questionLists{},
 		staff: map[int64][]string{}, tickets: map[int64]*ticket{},
 	}
 }
@@ -172,50 +172,28 @@ func (m *memTicketsStore) DeleteType(id int64) error {
 func (m *memTicketsStore) Questions(typeID int64) ([]formQuestion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]formQuestion(nil), m.questions[typeID]...), nil
+	return m.questions.get(typeID), nil
 }
 
 func (m *memTicketsStore) AddQuestion(typeID int64, q formQuestion) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	q.ID = m.id()
-	m.questions[typeID] = append(m.questions[typeID], q)
+	m.questions.add(typeID, q)
 	return nil
 }
 
 func (m *memTicketsStore) RemoveQuestion(typeID, questionID int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	kept := []formQuestion{}
-	for _, q := range m.questions[typeID] {
-		if q.ID != questionID {
-			kept = append(kept, q)
-		}
-	}
-	m.questions[typeID] = kept
+	m.questions.remove(typeID, questionID)
 	return nil
 }
 
 func (m *memTicketsStore) ReorderQuestions(typeID int64, ids []int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	byID := map[int64]formQuestion{}
-	for _, q := range m.questions[typeID] {
-		byID[q.ID] = q
-	}
-	ordered := []formQuestion{}
-	for _, id := range ids {
-		if q, ok := byID[id]; ok {
-			ordered = append(ordered, q)
-			delete(byID, id)
-		}
-	}
-	for _, q := range m.questions[typeID] {
-		if _, left := byID[q.ID]; left {
-			ordered = append(ordered, q)
-		}
-	}
-	m.questions[typeID] = ordered
+	m.questions.reorder(typeID, ids)
 	return nil
 }
 

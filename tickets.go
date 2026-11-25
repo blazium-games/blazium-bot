@@ -12,7 +12,7 @@ import (
 //	/tickettype create|edit|staff|show|post|header|welcome|list|delete   set up ticket types (Manage Server)
 //	/tickettype question add|remove|move                                optional intake questions
 //	/ticket close|claim|add|remove|rename                               inside a ticket (staff; the opener can close)
-//	/ticket list|panel                                                  every ticket, and a panel of ticket types (Manage Server)
+//	/ticket list|panel                                                  every ticket, and a panel of ticket types and forms (Manage Server)
 //
 // A ticket type (Support, Bug report, Partnership…) has its own category, staff roles, log
 // channel and button. It can ask intake questions first, shown as pop-ups. Opening a ticket
@@ -165,7 +165,7 @@ func ticketCommandOptions() []*discordgo.ApplicationCommandOption {
 		sub("remove", "Take someone out of this ticket", userOpt("user", "Who to remove", true)),
 		sub("rename", "Rename this ticket's channel", strOpt("name", "The new name", true, 90)),
 		sub("list", "Tickets in this server (staff)", typeOption(false), status),
-		sub("panel", "Post several ticket types as buttons on one message (staff)",
+		sub("panel", "Post ticket types and forms as buttons on one message (staff)",
 			strOpt("title", "The panel's heading", true, 256),
 			strOpt("text", "Words under the heading (optional)", false, 2000),
 			channelOpt("channel", "Where to post it (this channel if left empty)", false, panelTextChannels...)),

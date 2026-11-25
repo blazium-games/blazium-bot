@@ -19,7 +19,7 @@ import (
 // Custom IDs (never change a format already posted on a message):
 //
 //	ticket:<type id>:open   a type's Open button (on /tickettype post and /ticket panel)
-//	tickets:mine            🔎 My tickets on a panel
+//	tickets:mine            🔎 Mine on a panel (open tickets and submissions)
 //	tkttry:<type id>        👀 Try the questions, from /tickettype show (nothing is saved)
 //	tktpage:<token>         one intake page's pop-up
 //	tktnext:<token>         Continue to the next intake page
@@ -36,26 +36,6 @@ func openButton(tt ticketType) discordgo.Button {
 		b.Emoji = e
 	}
 	return b
-}
-
-func myTicketsButton() discordgo.Button {
-	return discordgo.Button{Label: "🔎 My tickets", Style: discordgo.SecondaryButton, CustomID: "tickets:mine"}
-}
-
-// ticketPanelButtons is one Open button per type, then 🔎 My tickets, five to a row.
-func ticketPanelButtons(types []ticketType) []discordgo.MessageComponent {
-	var buttons []discordgo.MessageComponent
-	for _, tt := range types {
-		buttons = append(buttons, openButton(tt))
-	}
-	buttons = append(buttons, myTicketsButton())
-	var rows []discordgo.MessageComponent
-	for len(buttons) > 0 {
-		n := min(5, len(buttons))
-		rows = append(rows, discordgo.ActionsRow{Components: buttons[:n]})
-		buttons = buttons[n:]
-	}
-	return rows
 }
 
 // ============================================================================
@@ -112,8 +92,8 @@ func dropDraft(token string) {
 
 func questionField(q formQuestion) string { return "q" + strconv.FormatInt(q.ID, 10) }
 
-// buildIntakePage is the pop-up for the draft's current page.
-func buildIntakePage(d *formDraft, token string) *discordgo.InteractionResponseData {
+// buildIntakePage is the pop-up for the draft's current page (tickets and forms alike).
+func buildIntakePage(d *formDraft, customID string) *discordgo.InteractionResponseData {
 	page := ""
 	if d.Total() > 1 {
 		page = fmt.Sprintf(" (%d/%d)", d.Page+1, d.Total())
@@ -154,7 +134,7 @@ func buildIntakePage(d *formDraft, token string) *discordgo.InteractionResponseD
 		}
 		components = append(components, discordgo.Label{Label: truncateRunes(q.Label, formLabelMax), Description: q.Help, Component: field})
 	}
-	return &discordgo.InteractionResponseData{CustomID: "tktpage:" + token, Title: title, Components: components}
+	return &discordgo.InteractionResponseData{CustomID: customID, Title: title, Components: components}
 }
 
 // modalValue is what a member entered in one pop-up field: typed text, or the picked option values.
@@ -296,7 +276,7 @@ func startTicket(s *discordgo.Session, i *discordgo.InteractionCreate, typeID in
 	}
 	d := &formDraft{FormID: typeID, GuildID: i.GuildID, UserID: user.ID, FormName: tt.Name, Questions: questions, Header: tt.Header, Preview: preview}
 	token := saveDraft(d)
-	if err := showModal(s, i, buildIntakePage(d, token)); err != nil {
+	if err := showModal(s, i, buildIntakePage(d, "tktpage:"+token)); err != nil {
 		dropDraft(token)
 		return err
 	}
@@ -310,7 +290,7 @@ func handleNextPageButton(s *discordgo.Session, i *discordgo.InteractionCreate, 
 		respondEphemeral(s, i, fmt.Sprintf("These questions have expired (you have %d minutes between pages). Please press the button again.", int(formDraftTTL.Minutes())))
 		return
 	}
-	if err := showModal(s, i, buildIntakePage(d, token)); err != nil {
+	if err := showModal(s, i, buildIntakePage(d, "tktpage:"+token)); err != nil {
 		appLogger.Warnf("Could not open the next intake page: %v", err)
 	}
 }
@@ -556,235 +536,4 @@ func answerFields(embed *discordgo.MessageEmbed, answers []formAnswer, title, fr
 	embed.Footer = &discordgo.MessageEmbedFooter{Text: "Some answers are long: all of them are in the attached file."}
 	data := formTranscript(title, "From: "+from, answers)
 	return []*discordgo.File{{Name: "answers.txt", ContentType: "text/plain", Reader: strings.NewReader(data)}}
-}
-
-func handleMyTicketsButton(s *discordgo.Session, i *discordgo.InteractionCreate, customID string) {
-	if customID != "tickets:mine" {
-		respondEphemeral(s, i, "This button no longer does anything.")
-		return
-	}
-	if ticketsOff(s, i) {
-		return
-	}
-	types, err := tickets.ListTypes(i.GuildID)
-	if err != nil {
-		respondEphemeral(s, i, errorText("My tickets", err))
-		return
-	}
-	var lines []string
-	for _, tt := range types {
-		open, err := tickets.OpenTicketsOf(tt.ID, interactionUser(i).ID)
-		if err != nil {
-			respondEphemeral(s, i, errorText("My tickets", err))
-			return
-		}
-		for _, t := range open {
-			lines = append(lines, fmt.Sprintf("• **%s** #%04d: <#%s>, opened <t:%d:R>", tt.Name, t.Number, t.ChannelID, t.OpenedAt.Unix()))
-		}
-	}
-	text := strings.Join(lines, "\n")
-	if text == "" {
-		text = "You have no open tickets. Press a button above to open one."
-	}
-	respondEphemeral(s, i, truncateRunes(text, 1900))
-}
-
-// ============================================================================
-// /ticket panel: pick the types, then post
-// ============================================================================
-
-const ticketPanelMax = 24 // one button per type, plus 🔎 My tickets: Discord allows 25 on a message
-
-type panelDraft struct {
-	userID, guildID, channelID, title, text string
-	listed                                  []ticketType // the types offered, in order
-	chosen                                  []int64
-	expires                                 time.Time
-}
-
-var (
-	panelDraftsMu sync.Mutex
-	panelDrafts   = map[string]*panelDraft{}
-)
-
-func (p *panelDraft) words(note string) string {
-	names := map[int64]string{}
-	for _, tt := range p.listed {
-		names[tt.ID] = tt.Name
-	}
-	var picked []string
-	for _, id := range p.chosen {
-		picked = append(picked, "**"+names[id]+"**")
-	}
-	list := strings.Join(picked, ", ")
-	if list == "" {
-		list = "none yet"
-	}
-	text := fmt.Sprintf("A ticket panel called **%s** for <#%s>. Pick its ticket types (their buttons go in the order listed), then press **Post the panel**.\nPicked: %s",
-		p.title, p.channelID, list)
-	if note != "" {
-		text = note + "\n\n" + text
-	}
-	return text
-}
-
-func (p *panelDraft) components(token string) []discordgo.MessageComponent {
-	shown := p.listed
-	if len(shown) > 25 {
-		shown = shown[:25]
-	}
-	chosen := map[int64]bool{}
-	for _, id := range p.chosen {
-		chosen[id] = true
-	}
-	options := make([]discordgo.SelectMenuOption, len(shown))
-	for n, tt := range shown {
-		desc := "closed to new tickets for now"
-		if tt.Open {
-			desc = "taking tickets"
-		}
-		options[n] = discordgo.SelectMenuOption{Label: truncateRunes(tt.Name, 100), Value: strconv.FormatInt(tt.ID, 10), Description: desc, Default: chosen[tt.ID]}
-		if e, err := parseButtonEmoji(tt.Emoji); err == nil && e != nil {
-			options[n].Emoji = e
-		}
-	}
-	least := 1
-	return []discordgo.MessageComponent{
-		discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.SelectMenu{
-			MenuType: discordgo.StringSelectMenu, CustomID: "tktpanel:pick:" + token, Placeholder: "Pick the ticket types for the panel…",
-			MinValues: &least, MaxValues: min(len(shown), ticketPanelMax), Options: options,
-		}}},
-		discordgo.ActionsRow{Components: []discordgo.MessageComponent{discordgo.Button{
-			Label: "Post the panel", Style: discordgo.SuccessButton, CustomID: "tktpanel:post:" + token, Disabled: len(p.chosen) == 0,
-		}}},
-	}
-}
-
-func ticketPanelMaker(s *discordgo.Session, i *discordgo.InteractionCreate, opts cmdOpts) {
-	types, err := tickets.ListTypes(i.GuildID)
-	if err != nil {
-		respondEphemeral(s, i, errorText("/ticket panel", err))
-		return
-	}
-	if len(types) == 0 {
-		respondEphemeral(s, i, "Make some ticket types first, with `/tickettype create`.")
-		return
-	}
-	title, _ := optString(opts, "title")
-	text, _ := optString(opts, "text")
-	channelID := i.ChannelID
-	if ch := optChannel(i, opts, "channel"); ch != nil {
-		channelID = ch.ID
-	}
-	p := &panelDraft{
-		userID: interactionUser(i).ID, guildID: i.GuildID, channelID: channelID,
-		title: strings.TrimSpace(title), text: panelText(text), listed: types, expires: time.Now().Add(formDraftTTL),
-	}
-	token := newToken()
-	panelDraftsMu.Lock()
-	for t, old := range panelDrafts {
-		if time.Now().After(old.expires) {
-			delete(panelDrafts, t)
-		}
-	}
-	panelDrafts[token] = p
-	panelDraftsMu.Unlock()
-	err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
-		Data: &discordgo.InteractionResponseData{Content: p.words(""), Components: p.components(token), Flags: discordgo.MessageFlagsEphemeral},
-	})
-	if err != nil {
-		appLogger.Warnf("Could not answer /ticket panel: %v", err)
-	}
-}
-
-func handlePanelMaker(s *discordgo.Session, i *discordgo.InteractionCreate, customID string) {
-	parts := strings.Split(customID, ":")
-	if len(parts) != 3 {
-		respondEphemeral(s, i, "This button no longer does anything.")
-		return
-	}
-	token := parts[2]
-	panelDraftsMu.Lock()
-	p, ok := panelDrafts[token]
-	panelDraftsMu.Unlock()
-	if !ok || time.Now().After(p.expires) || p.userID != interactionUser(i).ID {
-		updateMessage(s, i, "This menu has expired. Run `/ticket panel` again.", nil)
-		return
-	}
-	switch parts[1] {
-	case "pick":
-		picked := map[string]bool{}
-		for _, v := range i.MessageComponentData().Values {
-			picked[v] = true
-		}
-		p.chosen = nil
-		for _, tt := range p.listed {
-			if picked[strconv.FormatInt(tt.ID, 10)] {
-				p.chosen = append(p.chosen, tt.ID)
-			}
-		}
-		updateMessage(s, i, p.words(""), p.components(token))
-	case "post":
-		said, err := postTicketPanel(s, p)
-		if err != nil {
-			updateMessage(s, i, p.words("⚠️ "+errorText("Posting a ticket panel", err)), p.components(token))
-			return
-		}
-		panelDraftsMu.Lock()
-		delete(panelDrafts, token)
-		panelDraftsMu.Unlock()
-		updateMessage(s, i, said, nil)
-	default:
-		respondEphemeral(s, i, "This button no longer does anything.")
-	}
-}
-
-func postTicketPanel(s *discordgo.Session, p *panelDraft) (string, error) {
-	current, err := tickets.ListTypes(p.guildID)
-	if err != nil {
-		return "", err
-	}
-	byID := map[int64]ticketType{}
-	for _, tt := range current {
-		byID[tt.ID] = tt
-	}
-	var chosen []ticketType
-	for _, id := range p.chosen {
-		if tt, ok := byID[id]; ok {
-			chosen = append(chosen, tt)
-		}
-	}
-	if len(chosen) == 0 {
-		return "", userErrorf("Pick at least one ticket type for the panel.")
-	}
-	if len(chosen) > ticketPanelMax {
-		return "", userErrorf("A panel can hold %d ticket types (Discord allows 25 buttons on a message).", ticketPanelMax)
-	}
-	if err := checkPanelChannel(s, p.channelID); err != nil {
-		return "", err
-	}
-	text := p.text
-	if text == "" {
-		text = "Press a button below to open a private ticket with staff."
-	}
-	_, err = s.ChannelMessageSendComplex(p.channelID, &discordgo.MessageSend{
-		Embeds:          []*discordgo.MessageEmbed{{Title: p.title, Description: text, Color: ticketColor}},
-		Components:      ticketPanelButtons(chosen),
-		AllowedMentions: &discordgo.MessageAllowedMentions{},
-	})
-	if err != nil {
-		return "", userErrorf("I couldn't post in <#%s>. Check my permissions there.", p.channelID)
-	}
-	var closed []string
-	for _, tt := range chosen {
-		if !tt.Open {
-			closed = append(closed, "**"+tt.Name+"**")
-		}
-	}
-	note := ""
-	if len(closed) > 0 {
-		note = " Closed to new tickets for now: " + strings.Join(closed, ", ") + " (open with `/tickettype edit open:True`)."
-	}
-	return fmt.Sprintf("✅ Posted a ticket panel with %d type(s) in <#%s>.%s", len(chosen), p.channelID, note), nil
 }

@@ -150,7 +150,7 @@ func TestBuildIntakePage(t *testing.T) {
 		{ID: 15, Label: "Extra", Kind: kindShort},
 	}
 	d := &formDraft{FormName: "A very long ticket type name that goes past it", Questions: qs, Header: "Before you start"}
-	data := buildIntakePage(d, "tok")
+	data := buildIntakePage(d, "tktpage:tok")
 	if data.CustomID != "tktpage:tok" || len([]rune(data.Title)) > formNameMax || !strings.HasSuffix(data.Title, "(1/2)") {
 		t.Fatalf("title %q id %q", data.Title, data.CustomID)
 	}
@@ -236,12 +236,13 @@ func TestOpeningMessage(t *testing.T) {
 	}
 }
 
-func TestTicketPanelButtons(t *testing.T) {
-	var types []ticketType
-	for i := 1; i <= 7; i++ {
-		types = append(types, ticketType{ID: int64(i), Name: "Support", Emoji: "🎫"})
+func TestPanelButtons(t *testing.T) {
+	var items []panelItem
+	for i := 1; i <= 6; i++ {
+		items = append(items, ticketItem(ticketType{ID: int64(i), Name: "Support", Emoji: "🎫"}))
 	}
-	rows := ticketPanelButtons(types)
+	items = append(items, formItem(appForm{ID: 3, Name: "Game jam entry", ButtonLabel: "Enter"}))
+	rows := panelButtons(items, true)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d", len(rows))
 	}
@@ -250,8 +251,20 @@ func TestTicketPanelButtons(t *testing.T) {
 		t.Fatalf("button = %+v", first)
 	}
 	last := rows[1].(discordgo.ActionsRow).Components
-	if last[len(last)-1].(discordgo.Button).CustomID != "tickets:mine" {
-		t.Fatal("My tickets goes last")
+	form := last[1].(discordgo.Button)
+	if form.CustomID != "form:3:fill" || form.Label != "Game jam entry" {
+		t.Fatalf("form button on a panel is named after the form: %+v", form)
+	}
+	mine := last[2].(discordgo.Button)
+	if mine.CustomID != "tickets:mine" || mine.Label != "🔎 My tickets & submissions" {
+		t.Fatalf("mine = %+v", mine)
+	}
+	alone := panelButtons([]panelItem{ticketItem(ticketType{ID: 1, Name: "Support"})}, false)
+	if alone[0].(discordgo.ActionsRow).Components[1].(discordgo.Button).Label != "🔎 My tickets" {
+		t.Fatal("tickets only")
+	}
+	if b := formFillButton(appForm{ID: 3, Name: "Jam"}, false); b.Label != "📝 Fill in" {
+		t.Fatalf("default form button = %q", b.Label)
 	}
 }
 
@@ -492,7 +505,7 @@ func TestCommandsFitDiscordLimits(t *testing.T) {
 		}
 		checkOptionLimits(t, "/"+c.Name, c.Options)
 	}
-	for _, name := range []string{"panel", "tickettype"} {
+	for _, name := range []string{"panel", "tickettype", "form"} {
 		if c := byName[name]; c == nil || c.DefaultMemberPermissions == nil || *c.DefaultMemberPermissions != discordgo.PermissionManageGuild {
 			t.Errorf("/%s should exist and default to Manage Server", name)
 		}
@@ -502,12 +515,12 @@ func TestCommandsFitDiscordLimits(t *testing.T) {
 	}
 	routesMu.RLock()
 	defer routesMu.RUnlock()
-	for _, prefix := range []string{"signup", "ticket", "tickets", "tkttry", "tktnext", "tkt", "tktdel", "tktpanel"} {
+	for _, prefix := range []string{"signup", "ticket", "tickets", "tkttry", "tktnext", "tkt", "tktdel", "tktpanel", "form", "formtry", "formnext", "formdel", "formsub"} {
 		if componentRoutes[prefix] == nil {
 			t.Errorf("no button route for %q", prefix)
 		}
 	}
-	for _, prefix := range []string{"tktpage", "tkttext", "tktclose"} {
+	for _, prefix := range []string{"tktpage", "tkttext", "tktclose", "formpage", "formtext", "formnote"} {
 		if modalRoutes[prefix] == nil {
 			t.Errorf("no pop-up route for %q", prefix)
 		}
