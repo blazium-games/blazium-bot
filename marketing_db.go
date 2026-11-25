@@ -30,33 +30,20 @@ type pgMarketingStore struct {
 	db *sql.DB
 }
 
-func newPostgresMarketingStore(connString string) (*pgMarketingStore, error) {
-	db, err := sql.Open("pgx", connString)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(8)
-	db.SetMaxIdleConns(2)
-	db.SetConnMaxLifetime(30 * time.Minute)
+// newPostgresMarketingStore uses the bot's shared pool (bot_db.go) and makes sure the tables exist.
+func newPostgresMarketingStore(db *sql.DB) (*pgMarketingStore, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	store := &pgMarketingStore{db: db}
 	if err := store.ensureSchema(ctx); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
 }
 
+// Close is a no-op: the pool is shared and closed once at shutdown (closeBotDatabase).
 func (s *pgMarketingStore) Close() error {
-	if s == nil || s.db == nil {
-		return nil
-	}
-	return s.db.Close()
+	return nil
 }
 
 func (s *pgMarketingStore) ensureSchema(ctx context.Context) error {

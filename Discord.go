@@ -284,6 +284,8 @@ func registerAllCommands() error {
 		}
 	}
 
+	registerSignupPanels()
+
 	appLogger.Infof("Successfully registered %d commands (guild-specific)", len(CommandManager.ListCommands()))
 	return nil
 }
