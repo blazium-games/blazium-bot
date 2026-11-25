@@ -855,6 +855,68 @@ func handlePurgeCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	})
 }
 
+// channelPermissions works out a member's permissions in one channel: their roles, then
+// the channel's @everyone, role and member overwrites, as Discord does.
+func channelPermissions(guildID, ownerID, userID string, memberRoles []string, roles map[string]*discordgo.Role, ch *discordgo.Channel) int64 {
+	if userID == ownerID {
+		return discordgo.PermissionAll
+	}
+	perms := guildPermissions(guildID, memberRoles, roles)
+	if perms&discordgo.PermissionAdministrator != 0 {
+		return discordgo.PermissionAll
+	}
+	has := map[string]bool{}
+	for _, r := range memberRoles {
+		has[r] = true
+	}
+	for _, o := range ch.PermissionOverwrites {
+		if o.Type == discordgo.PermissionOverwriteTypeRole && o.ID == guildID {
+			perms &^= o.Deny
+			perms |= o.Allow
+		}
+	}
+	var allow, deny int64
+	for _, o := range ch.PermissionOverwrites {
+		if o.Type == discordgo.PermissionOverwriteTypeRole && has[o.ID] {
+			allow |= o.Allow
+			deny |= o.Deny
+		}
+	}
+	perms &^= deny
+	perms |= allow
+	for _, o := range ch.PermissionOverwrites {
+		if o.Type == discordgo.PermissionOverwriteTypeMember && o.ID == userID {
+			perms &^= o.Deny
+			perms |= o.Allow
+		}
+	}
+	return perms
+}
+
+// needChannelPermission makes sure the member may use perm in channelID. Discord only
+// tells the bot the member's permissions in the channel the command was used in, so a
+// command aimed at another channel (/lock #rules) is checked against that channel itself.
+func needChannelPermission(s *discordgo.Session, i *discordgo.InteractionCreate, channelID string, perm int64, permName string) error {
+	if channelID == i.ChannelID {
+		return nil // checked by startModeration
+	}
+	ch, err := s.Channel(channelID)
+	if err != nil || ch.GuildID != i.GuildID {
+		return userErrorf("I can't see that channel.")
+	}
+	if hasPermission(i, discordgo.PermissionAdministrator) {
+		return nil // Administrator or the staff role
+	}
+	facts, err := loadRoleFacts(s, i.GuildID)
+	if err != nil {
+		return err
+	}
+	if channelPermissions(i.GuildID, facts.OwnerID, interactionUser(i).ID, i.Member.Roles, facts.Roles, ch)&perm == 0 {
+		return userErrorf("You need the **%s** permission in <#%s>.", permName, channelID)
+	}
+	return nil
+}
+
 func targetChannelID(i *discordgo.InteractionCreate, opts cmdOpts) string {
 	if ch := optChannel(i, opts, "channel"); ch != nil {
 		return ch.ID
@@ -865,6 +927,9 @@ func targetChannelID(i *discordgo.InteractionCreate, opts cmdOpts) string {
 func handleSlowmodeCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	startModeration(s, i, permManageChannels, "Manage Channels", func(opts cmdOpts) (string, error) {
 		channelID := targetChannelID(i, opts)
+		if err := needChannelPermission(s, i, channelID, permManageChannels, "Manage Channels"); err != nil {
+			return "", err
+		}
 		text, _ := optString(opts, "delay")
 		var d time.Duration
 		if t := strings.ToLower(strings.TrimSpace(text)); t != "off" && t != "0" && t != "none" {
@@ -907,6 +972,9 @@ func everyoneOverwrite(ch *discordgo.Channel, guildID string) (allow, deny int64
 
 func setChannelLock(s *discordgo.Session, i *discordgo.InteractionCreate, opts cmdOpts, lock bool) (string, error) {
 	channelID := targetChannelID(i, opts)
+	if err := needChannelPermission(s, i, channelID, permManageChannels, "Manage Channels"); err != nil {
+		return "", err
+	}
 	reason, _ := optString(opts, "reason")
 	ch, err := s.Channel(channelID)
 	if err != nil {

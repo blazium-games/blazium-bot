@@ -333,3 +333,45 @@ func TestSettingsCache(t *testing.T) {
 		t.Error("describeSettings should show the message log")
 	}
 }
+
+func TestChannelPermissions(t *testing.T) {
+	send, manage := int64(discordgo.PermissionSendMessages), int64(discordgo.PermissionManageChannels)
+	roles := map[string]*discordgo.Role{
+		"g":     {ID: "g", Permissions: send},
+		"mod":   {ID: "mod", Permissions: send},
+		"admin": {ID: "admin", Permissions: discordgo.PermissionAdministrator},
+	}
+	ch := &discordgo.Channel{PermissionOverwrites: []*discordgo.PermissionOverwrite{
+		{ID: "g", Type: discordgo.PermissionOverwriteTypeRole, Deny: send},
+		{ID: "mod", Type: discordgo.PermissionOverwriteTypeRole, Allow: manage},
+		{ID: "banned", Type: discordgo.PermissionOverwriteTypeMember, Deny: manage},
+	}}
+	if p := channelPermissions("g", "owner", "u", nil, roles, ch); p&(send|manage) != 0 {
+		t.Errorf("a plain member: %b", p)
+	}
+	if p := channelPermissions("g", "owner", "u", []string{"mod"}, roles, ch); p&manage == 0 || p&send != 0 {
+		t.Errorf("a mod gets Manage Channels from the overwrite but not Send: %b", p)
+	}
+	if p := channelPermissions("g", "owner", "banned", []string{"mod"}, roles, ch); p&manage != 0 {
+		t.Errorf("a member overwrite beats role overwrites: %b", p)
+	}
+	if p := channelPermissions("g", "owner", "u", []string{"admin"}, roles, ch); p != discordgo.PermissionAll {
+		t.Error("Administrator has every permission")
+	}
+	if p := channelPermissions("g", "owner", "owner", nil, roles, ch); p != discordgo.PermissionAll {
+		t.Error("the owner has every permission")
+	}
+}
+
+// Every command that changes the server or acts on members is hidden from regular members
+// by default (Discord's default permissions) and checks again when used.
+func TestStaffCommandsHiddenByDefault(t *testing.T) {
+	everyone := map[string]bool{"serverinfo": true, "userinfo": true, "avatar": true, "roleinfo": true, "remind": true}
+	defs := append(moderationCommands(), settingsCommand(), announceCommand(), remindCommand())
+	defs = append(defs, utilityCommands()...)
+	for _, c := range defs {
+		if everyone[c.Name] != (c.DefaultPermissions == nil) {
+			t.Errorf("/%s: default permissions %v", c.Name, c.DefaultPermissions)
+		}
+	}
+}

@@ -292,7 +292,16 @@ func runRemind(i *discordgo.InteractionCreate, sub string, opts cmdOpts) (string
 		if err != nil {
 			return "", err
 		}
-		id, err := reminders.Add(&reminder{UserID: user.ID, GuildID: i.GuildID, ChannelID: i.ChannelID, InChannel: here, Text: text, DueAt: due})
+		// The bot must not post a member's words where they couldn't post themselves (a
+		// read-only announcements channel), neither with here:True nor when a DM fails.
+		channelID := i.ChannelID
+		if !canSendHere(i) {
+			if here {
+				return "", userErrorf("You can't post in this channel, so I can't remind you here. Leave `here` off to get it by DM.")
+			}
+			channelID = ""
+		}
+		id, err := reminders.Add(&reminder{UserID: user.ID, GuildID: i.GuildID, ChannelID: channelID, InChannel: here, Text: text, DueAt: due})
 		if err != nil {
 			return "", err
 		}
@@ -389,6 +398,11 @@ func reminderEmbed(r reminder) *discordgo.MessageEmbed {
 	}
 }
 
+// canSendHere: the member may post in the channel the command was used in.
+func canSendHere(i *discordgo.InteractionCreate) bool {
+	return i.Member != nil && i.Member.Permissions&(discordgo.PermissionSendMessages|discordgo.PermissionAdministrator) != 0
+}
+
 func deliverReminder(s *discordgo.Session, r reminder) {
 	embed := reminderEmbed(r)
 	if !r.InChannel {
@@ -397,6 +411,10 @@ func deliverReminder(s *discordgo.Session, r reminder) {
 				return
 			}
 		}
+	}
+	if r.ChannelID == "" {
+		appLogger.Warnf("Could not DM reminder %d to %s, and it has no channel to fall back on", r.ID, r.UserID)
+		return
 	}
 	_, err := s.ChannelMessageSendComplex(r.ChannelID, &discordgo.MessageSend{
 		Content:         "<@" + r.UserID + ">",
