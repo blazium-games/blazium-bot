@@ -38,13 +38,13 @@ func handleHelpCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				Inline: false,
 			},
 			{
-				Name:   "`/form`",
-				Value:  "Staff (Manage Server): application forms members fill in. create, edit, question add/remove/move, show, post, panel, chat, header, welcome, list, delete",
+				Name:   "`/tickettype`",
+				Value:  "Staff (Manage Server): set up ticket types with their category, staff roles, log channel, intake questions and buttons",
 				Inline: false,
 			},
 			{
-				Name:   "`/applications`",
-				Value:  "Staff (Manage Server): list applications sent, or view one with Accept and Decline",
+				Name:   "`/ticket`",
+				Value:  "Inside a ticket: close (the opener or staff), claim, add, remove, rename (staff). Staff: list tickets, post a panel of ticket types",
 				Inline: false,
 			},
 		},

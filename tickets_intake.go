@@ -6,12 +6,12 @@ import (
 	"strings"
 )
 
-// What an application form is made of: questions, their kinds and Discord's limits.
-// No Discord calls here, so all of it can be tested.
+// A ticket type's intake questions: what a member answers before their ticket opens,
+// their kinds and Discord's limits. No Discord calls here, so all of it can be tested.
 //
-// A form is shown as one or more pop-ups of at most formPerPage questions each. Answers
-// are saved together with the question as it was asked, so changing a form later never
-// changes an application already sent.
+// The questions are shown as one or more pop-ups of at most formPerPage each. Answers are
+// saved with each question as it was asked, so changing the questions later never changes
+// a ticket already opened.
 
 const (
 	formPerPage      = 5    // questions in one pop-up
@@ -20,11 +20,11 @@ const (
 	formHelpMax      = 100  // the line of help under a question
 	formChoicesMax   = 25   // options in a dropdown
 	formChoiceMax    = 100  // one option
-	formNameMax      = 45   // a form's name is a pop-up's title
-	formIntroMax     = 1000 // words above the Apply button
+	formNameMax      = 45   // a ticket type's name is a pop-up's title
+	formIntroMax     = 1000 // words above the Open button
 	formHeaderMax    = 4000 // the block of text at the top of the first pop-up
-	formWelcomeMax   = 1800 // the message posted in an applicant's chat
-	formNoteMax      = 500  // a reviewer's note to the applicant
+	formWelcomeMax   = 1800 // staff's own message posted in each new ticket
+	formReasonMax    = 500  // a reason for closing a ticket
 )
 
 const (
@@ -46,9 +46,9 @@ var formKinds = []struct{ Key, Name string }{
 var formTextMax = map[string]int{kindShort: 300, kindParagraph: 1000}
 
 var formWelcomeWords = []struct{ Word, What string }{
-	{"{member}", "pings the applicant"},
+	{"{member}", "pings the member"},
 	{"{name}", "their name"},
-	{"{form}", "the form's name"},
+	{"{type}", "the ticket type"},
 }
 
 func kindName(kind string) string {
@@ -181,9 +181,9 @@ type formAnswer struct {
 	Answer   string `json:"answer"`
 }
 
-// formDraft is an application being filled in, page by page. Kept in memory only until it's sent.
+// formDraft is a ticket's intake questions being filled in, page by page. Kept in memory only until it's sent.
 type formDraft struct {
-	FormID    int64
+	FormID    int64 // the ticket type
 	GuildID   string
 	UserID    string
 	FormName  string
@@ -232,7 +232,7 @@ func loadAnswers(text string) []formAnswer {
 	return out
 }
 
-// formTranscript is the whole application as plain text, for a file when it's too long for a message.
+// formTranscript is the intake answers as plain text, for a file when they're too long for a message.
 func formTranscript(title, who string, answers []formAnswer) string {
 	lines := []string{title, who, ""}
 	for n, a := range answers {
@@ -245,9 +245,9 @@ func formTranscript(title, who string, answers []formAnswer) string {
 	return strings.Join(lines, "\n")
 }
 
-// fillWelcome puts the applicant and form into a chat's welcome message, within Discord's 2000 characters.
-func fillWelcome(text, mention, name, form string) string {
-	text = strings.NewReplacer("{member}", mention, "{name}", name, "{form}", form).Replace(text)
+// fillWelcome puts the member and ticket type into a ticket's welcome message, within Discord's 2000 characters.
+func fillWelcome(text, mention, name, ticketType string) string {
+	text = strings.NewReplacer("{member}", mention, "{name}", name, "{type}", ticketType, "{form}", ticketType).Replace(text)
 	return truncateRunes(text, 2000)
 }
 
@@ -281,13 +281,13 @@ func fitLines(head string, lines []string, more func(int) string) string {
 	return text
 }
 
-// chatName is a valid channel name for an applicant's chat: "apply-ann".
-func chatName(username, userID string) string {
+// ticketChannelName is a valid channel name for a ticket: "ticket-0042-ann" ("closed-0042-ann" once closed).
+func ticketChannelName(prefix string, number int64, username string) string {
 	var b strings.Builder
 	lastDash := false
 	for _, r := range strings.ToLower(strings.TrimSpace(username)) {
 		switch {
-		case r == ' ' || r == '-' || r == '\t':
+		case r == ' ' || r == '-' || r == '	' || r == '.':
 			if !lastDash && b.Len() > 0 {
 				b.WriteRune('-')
 				lastDash = true
@@ -297,9 +297,9 @@ func chatName(username, userID string) string {
 			lastDash = false
 		}
 	}
-	name := strings.Trim(b.String(), "-")
-	if name == "" {
-		name = userID
+	name := fmt.Sprintf("%s-%04d", prefix, number)
+	if user := strings.Trim(b.String(), "-"); user != "" {
+		name += "-" + user
 	}
-	return truncateRunes("apply-"+name, 90)
+	return truncateRunes(name, 90)
 }
