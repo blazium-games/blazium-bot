@@ -50,6 +50,7 @@ func main() {
 	initTickets()
 	initForms()
 	initServerTools()
+	initReminders()
 	defer closeBotDatabase()
 
 	// Create a new router using Gorilla Mux

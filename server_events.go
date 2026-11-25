@@ -46,6 +46,7 @@ func botIntents() discordgo.Intent {
 // serverEventHandlers are added to every shard.
 func serverEventHandlers() []interface{} {
 	return []interface{}{
+		rememberSession,
 		handleMemberJoin, handleMemberUpdate, handleMemberLeave,
 		handleMessageCreateForLog, handleMessageUpdateForLog, handleMessageDeleteForLog, handleMessageBulkDeleteForLog,
 	}
