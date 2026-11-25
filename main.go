@@ -47,6 +47,7 @@ func main() {
 
 	initMarketing()
 	initSignupPanels()
+	initForms()
 	defer closeBotDatabase()
 
 	// Create a new router using Gorilla Mux

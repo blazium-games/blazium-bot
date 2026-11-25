@@ -219,11 +219,15 @@ func isNotFound(err error) bool {
 // OPTIONS
 // ============================================================================
 
-// commandOptions returns the subcommand used (or "") and its options by name.
+// commandOptions returns the subcommand used (or ""; "group sub" inside a subcommand group)
+// and its options by name.
 func commandOptions(i *discordgo.InteractionCreate) (string, map[string]*discordgo.ApplicationCommandInteractionDataOption) {
 	opts := i.ApplicationCommandData().Options
 	sub := ""
-	if len(opts) > 0 && opts[0].Type == discordgo.ApplicationCommandOptionSubCommand {
+	if len(opts) > 0 && opts[0].Type == discordgo.ApplicationCommandOptionSubCommandGroup && len(opts[0].Options) > 0 {
+		sub = opts[0].Name + " " + opts[0].Options[0].Name
+		opts = opts[0].Options[0].Options
+	} else if len(opts) > 0 && opts[0].Type == discordgo.ApplicationCommandOptionSubCommand {
 		sub = opts[0].Name
 		opts = opts[0].Options
 	}

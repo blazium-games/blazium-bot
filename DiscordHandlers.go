@@ -37,6 +37,16 @@ func handleHelpCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
 				Value:  "Staff (Manage Server): sign-up panels, messages with buttons that give members roles. create, add-role, remove-role, edit, move, refresh, list, delete",
 				Inline: false,
 			},
+			{
+				Name:   "`/form`",
+				Value:  "Staff (Manage Server): application forms members fill in. create, edit, question add/remove/move, show, post, panel, chat, header, welcome, list, delete",
+				Inline: false,
+			},
+			{
+				Name:   "`/applications`",
+				Value:  "Staff (Manage Server): list applications sent, or view one with Accept and Decline",
+				Inline: false,
+			},
 		},
 		Footer: &discordgo.MessageEmbedFooter{
 			Text: "Blazium Bot - Use slash commands to interact with the bot",
